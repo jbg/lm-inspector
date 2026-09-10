@@ -542,6 +542,7 @@ export function Radio({
   onChange,
   label,
   disabled = false,
+  title,
   style,
 }: {
   name?: string;
@@ -550,10 +551,12 @@ export function Radio({
   onChange?: (value: string) => void;
   label?: React.ReactNode;
   disabled?: boolean;
+  title?: string;
   style?: Sty;
 }) {
   return (
     <label
+      title={title}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -606,7 +609,7 @@ export function RadioGroup({
   style,
 }: {
   name?: string;
-  options?: Array<string | { value: string; label: string }>;
+  options?: Array<string | { value: string; label: string; disabled?: boolean; title?: string }>;
   value?: string;
   onChange?: (value: string) => void;
   direction?: "column" | "row";
@@ -617,7 +620,20 @@ export function RadioGroup({
       {options.map((o) => {
         const v = typeof o === "string" ? o : o.value;
         const l = typeof o === "string" ? o : o.label;
-        return <Radio key={v} name={name} value={v} label={l} checked={value === v} onChange={onChange} />;
+        const disabled = typeof o === "string" ? false : (o.disabled ?? false);
+        const title = typeof o === "string" ? undefined : o.title;
+        return (
+          <Radio
+            key={v}
+            name={name}
+            value={v}
+            label={l}
+            checked={value === v}
+            onChange={onChange}
+            disabled={disabled}
+            title={title}
+          />
+        );
       })}
     </div>
   );

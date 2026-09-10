@@ -34,6 +34,9 @@ export interface LoadedModelInfo {
   captureDiscovery: string;
   interventionDiscovery: string;
   speculativeInterventionDiscovery?: string;
+  /** Why controlled execution is unavailable for this architecture (probed
+   * at load); absent = controlled runs work. */
+  controlSupport?: string;
 }
 
 export interface StartRunSpec {
@@ -53,6 +56,9 @@ export interface StartRunSpec {
   interventionDraft?: unknown;
   budgets?: Record<string, unknown>;
   createdMs?: number;
+  /** "controlled" (fail if unsupported), "observed" (free-run), or absent =
+   * controlled with automatic observed fallback. */
+  execution?: "controlled" | "observed";
 }
 
 export interface RunStarted {

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use eredu::api::{local_device_plan, LoadedModel, LocalDevice};
+use eredu::api::{local_device_plan, LoadedModel, LocalDevice, PreparedChatGenerationSettings};
 use eredu_backend_mlx::MlxBackendFactory;
 use eredu_core::{DraftPlacementPlan, DraftingPlan, ExecutionPlan, SessionCapabilities};
 
@@ -113,7 +113,7 @@ pub fn load_model(
             message: e.to_string(),
             chain: error_chain(&e),
         })?;
-    let (model, drafting) = planned.into_parts();
+    let (mut model, drafting) = planned.into_parts();
 
     // The first discovery call resolves the checkpoint's content fingerprint
     // (a hash over the full weight payload, cached afterwards) — by far the
@@ -177,6 +177,49 @@ pub fn load_model(
         _ => "unknown".to_string(),
     };
 
+    // Probe controlled-execution support once: eredu only reports it at
+    // start_controlled_* (backend support is separate from chat admission),
+    // so attempt a throwaway controlled-text session and discard its records.
+    // Only the exact capture-unsupported gate counts as a verdict; any other
+    // failure is not evidence and controlled runs stay offered.
+    let control_support: Option<String> = (|| {
+        use std::ops::ControlFlow;
+        let request = eredu::runtime::chat::ChatTemplateRequest {
+            messages: vec![serde_json::json!({"role": "user", "content": "probe"})],
+            add_generation_prompt: true,
+            ..Default::default()
+        };
+        let chat = model.prepare_chat(request).ok()?;
+        let resolved = crate::budgets::resolve(&Default::default());
+        let prepared = model
+            .prepare_observed_chat(
+                &chat,
+                PreparedChatGenerationSettings {
+                    overrides: Default::default(),
+                    strategy: eredu_core::TextSamplingStrategy::Standard,
+                    seed: 0,
+                },
+                eredu_core::capture::CapturePlan::none(),
+                resolved.trace,
+            )
+            .ok()?;
+        match model.start_controlled_text(
+            prepared,
+            &[],
+            eredu_core::execution_control::GenerationControlHandle::default(),
+            |_| ControlFlow::Continue(()),
+        ) {
+            Ok(mut session) => {
+                let _ = session.cancel(|_| ControlFlow::Continue(()));
+                None
+            }
+            Err(eredu::api::ControlledGenerationError::Capture(
+                eredu_core::capture::CaptureError::Unsupported(reason),
+            )) => Some(reason),
+            Err(_) => None,
+        }
+    })();
+
     let info = LoadedModelInfoDto {
         model_epoch,
         artifact_path: artifact_path.display().to_string(),
@@ -193,6 +236,7 @@ pub fn load_model(
         capture_discovery,
         intervention_discovery,
         speculative_intervention_discovery,
+        control_support,
     };
     stage("ready");
 

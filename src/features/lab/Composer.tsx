@@ -10,6 +10,7 @@ import { Input } from "../../goose/ui";
 import { Switch } from "../../goose/ui";
 import { RadioGroup } from "../../goose/ui";
 import { Tag } from "../../goose/ui";
+import { useEffect } from "react";
 import { useSession } from "../../state/session";
 import { useUi } from "../../state/ui";
 import { Select } from "../../goose/ui";
@@ -21,6 +22,13 @@ export function Composer() {
   const plans = usePlans();
   const info = session.load.phase === "loaded" ? session.load.info : undefined;
   const speculative = (info?.drafting ?? "disabled") !== "disabled";
+  const controlUnsupported = info?.controlSupport;
+
+  // A model without controlled execution can only run observed.
+  useEffect(() => {
+    if (controlUnsupported && plans.execution === "controlled") plans.setExecution("observed");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlUnsupported, plans.execution]);
 
   const { layerOutputPaths, routingPaths } = useMemo(() => {
     const points = session.captureDiscovery?.catalog?.points ?? [];
@@ -80,6 +88,27 @@ export function Composer() {
         )}
 
         {!plans.textMode && <ToolsPanel error={toolsError} />}
+
+        {!speculative && (
+          <div style={{ marginTop: 16 }}>
+            <Eyebrow style={{ marginBottom: 8 }}>Session</Eyebrow>
+            <RadioGroup
+              name="execution"
+              direction="row"
+              options={[
+                {
+                  value: "controlled",
+                  label: "Controlled — step, force, branch",
+                  disabled: controlUnsupported !== undefined,
+                  title: controlUnsupported,
+                },
+                { value: "observed", label: "Observed — free-run to completion" },
+              ]}
+              value={plans.execution}
+              onChange={(v) => plans.setExecution(v as "controlled" | "observed")}
+            />
+          </div>
+        )}
 
         <div style={{ marginTop: 24, display: "flex", gap: 12, alignItems: "center" }}>
           <Button disabled={!canStart} onClick={() => void start()}>

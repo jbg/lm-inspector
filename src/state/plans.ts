@@ -57,6 +57,8 @@ interface PlansState {
   messages: MessageDraft[];
   rawText: string;
   textMode: boolean;
+  /** Session mode: controlled (step/force/branch) or observed (free-run). */
+  execution: "controlled" | "observed";
   /** Tool declarations as JSON source text (edited raw, parsed at start). */
   toolsJson: string;
   toolChoice: "auto" | "none" | "required";
@@ -70,6 +72,7 @@ interface PlansState {
   setMessages: (messages: MessageDraft[]) => void;
   setRawText: (text: string) => void;
   setTextMode: (on: boolean) => void;
+  setExecution: (execution: "controlled" | "observed") => void;
   setToolsJson: (json: string) => void;
   setToolChoice: (choice: "auto" | "none" | "required") => void;
   setThinking: (on: boolean | undefined) => void;
@@ -85,6 +88,7 @@ export const usePlans = create<PlansState>((set) => ({
   messages: [{ role: "user", content: "" }],
   rawText: "",
   textMode: false,
+  execution: "controlled" as const,
   toolsJson: "",
   toolChoice: "auto",
   enableThinking: undefined,
@@ -111,6 +115,7 @@ export const usePlans = create<PlansState>((set) => ({
   setMessages: (messages) => set({ messages }),
   setRawText: (rawText) => set({ rawText }),
   setTextMode: (textMode) => set({ textMode }),
+  setExecution: (execution) => set({ execution }),
   setToolsJson: (toolsJson) => set({ toolsJson }),
   setToolChoice: (toolChoice) => set({ toolChoice }),
   setThinking: (enableThinking) => set({ enableThinking }),
@@ -265,7 +270,16 @@ export function buildInterventionPlan(list: InterventionDraft[]): unknown {
 export function buildStartSpec(
   state: Pick<
     PlansState,
-    "messages" | "rawText" | "textMode" | "toolsJson" | "toolChoice" | "enableThinking" | "sampling" | "capture" | "interventions"
+    | "messages"
+    | "rawText"
+    | "textMode"
+    | "execution"
+    | "toolsJson"
+    | "toolChoice"
+    | "enableThinking"
+    | "sampling"
+    | "capture"
+    | "interventions"
   >,
   layerOutputPaths: string[],
   routingPaths: string[],
@@ -306,5 +320,8 @@ export function buildStartSpec(
     capture: buildCapturePlan(state.capture, layerOutputPaths, routingPaths, speculative),
     intervention: buildInterventionPlan(state.interventions),
     createdMs: Date.now(),
+    // Speculative runs have their own session shape; the choice rides
+    // controlled starts only.
+    execution: speculative ? undefined : state.execution,
   };
 }

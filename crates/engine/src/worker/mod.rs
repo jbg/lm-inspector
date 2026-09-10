@@ -122,6 +122,9 @@ pub struct LoadedModelInfoDto {
     pub capture_discovery: String,
     pub intervention_discovery: String,
     pub speculative_intervention_discovery: Option<String>,
+    /// Why controlled execution (step/pause/force/snapshots) is unavailable
+    /// for this architecture, probed at load; None = controlled runs work.
+    pub control_support: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +169,10 @@ pub struct StartRunSpecDto {
     /// Millis since epoch, stamped by the frontend for run metadata.
     #[serde(default)]
     pub created_ms: Option<u64>,
+    /// "controlled" (fail if unsupported), "observed" (free-run), or absent =
+    /// controlled with automatic observed fallback.
+    #[serde(default)]
+    pub execution: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

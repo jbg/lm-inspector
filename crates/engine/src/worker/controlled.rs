@@ -306,6 +306,33 @@ pub fn run_controlled(
     let semantic_supported = matches!(chat.semantic_support(), SemanticSupport::Supported);
     let use_text = prepared_spec.text_mode_requested || !semantic_supported;
 
+    // Explicitly requested observed mode: never attempt a controlled start.
+    if spec.execution.as_deref() == Some("observed") {
+        return run_observed_fallback(
+            loaded,
+            &spec,
+            &prepared_spec,
+            |model| match &prepared_spec.intervention {
+                Some(plan) => model.prepare_intervened_chat(
+                    &chat,
+                    prepared_spec.settings.clone(),
+                    prepared_spec.capture.clone(),
+                    plan.clone(),
+                    prepared_spec.trace,
+                ),
+                None => model.prepare_observed_chat(
+                    &chat,
+                    prepared_spec.settings.clone(),
+                    prepared_spec.capture.clone(),
+                    prepared_spec.trace,
+                ),
+            },
+            "observed mode was selected for this run".into(),
+            reply,
+            context,
+        );
+    }
+
     let prepared = {
         let result = match &prepared_spec.intervention {
             Some(plan) => loaded.model.prepare_intervened_chat(
@@ -367,6 +394,10 @@ pub fn run_controlled(
                 eredu_core::capture::CaptureError::Unsupported(reason),
             ) = &e
             {
+                if spec.execution.as_deref() == Some("controlled") {
+                    let _ = reply.send(Err(control_error("start", &e)));
+                    return None;
+                }
                 let reason = reason.clone();
                 return run_observed_fallback(
                     loaded,

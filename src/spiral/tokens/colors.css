@@ -1,0 +1,50 @@
+:root{
+/* base palette — sampled from the Spiral + goose deck */
+--spiral-magenta:#FF00FF;
+--spiral-blue:#0000FF;
+--spiral-violet:#8A2BE2; /* midpoint of the mark's magenta→blue gradient */
+--spiral-stone:#E5E5E1; /* slide background */
+--spiral-white:#FFFFFF;
+--spiral-black:#000000;
+--spiral-ink:#0F0E0F; /* dark-slide background */
+--spiral-gray-600:#666666; /* "before" stat block */
+--spiral-gray-400:#9A9A96;
+--spiral-gray-200:#CFCFCA;
+/* diagram / semantic accents (from architecture + code slides) */
+--spiral-diagram-blue:#1967D2;
+--spiral-diagram-green:#188038;
+--spiral-diagram-purple:#9334E6;
+--spiral-diagram-slate:#37474F;
+/* gradients */
+--spiral-gradient-mark:linear-gradient(135deg,#FF00FF 0%,#0000FF 100%); /* @kind color */
+--spiral-gradient-frame:linear-gradient(90deg,#FF00FF 0%,#8A2BE2 100%); /* @kind color */
+/* semantic — light (default) */
+--bg:var(--spiral-stone);
+--surface:var(--spiral-white);
+--surface-inverse:var(--spiral-black);
+--text:var(--spiral-black);
+--text-muted:var(--spiral-gray-600);
+--text-inverse:var(--spiral-white);
+--accent:var(--spiral-magenta);
+--accent-2:var(--spiral-blue);
+--accent-text:var(--spiral-magenta);
+--accent-2-text:var(--spiral-blue);
+--border:var(--spiral-black);
+--border-accent:var(--spiral-magenta);
+--border-accent-2:var(--spiral-blue);
+--focus-ring:var(--spiral-magenta);
+--success:var(--spiral-diagram-green);
+--info:var(--spiral-diagram-blue);
+--warning:var(--spiral-diagram-purple);
+--danger:var(--spiral-magenta);
+--placeholder-x:#FF0000; /* red X placeholder used for missing images */
+}
+[data-theme="dark"]{
+--bg:var(--spiral-black);
+--surface:var(--spiral-ink);
+--surface-inverse:var(--spiral-white);
+--text:var(--spiral-white);
+--text-muted:var(--spiral-gray-400);
+--text-inverse:var(--spiral-black);
+--border:var(--spiral-white);
+}

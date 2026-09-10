@@ -1,0 +1,31 @@
+[package]
+name = "inspector-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+mlx = ["eredu/mlx", "dep:eredu-backend-mlx", "dep:tokenizers"]
+metal = ["mlx", "eredu/metal"]
+
+[dependencies]
+eredu = { workspace = true }
+eredu-core = { workspace = true }
+eredu-architectures = { workspace = true }
+eredu-text = { workspace = true }
+eredu-runtime = { workspace = true }
+eredu-backend-mlx = { workspace = true, optional = true }
+hf-cache-reader = { workspace = true }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"], optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

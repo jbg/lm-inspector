@@ -1,0 +1,15 @@
+:root{
+--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:48px;--space-8:64px;--space-9:96px;
+--slide-w:1280px;--slide-h:720px;--slide-pad:64px; /* deck margin ≈ 36pt */
+/* radii: the brand is square. Only the mark's tiles and the stat blocks round. */
+--radius-none:0;--radius-sm:4px;--radius-md:8px;--radius-tile:12%;
+/* borders */
+--border-w:1px;--border-w-strong:2px;
+/* shadows: none in the brand. Kept as explicit zero. */
+--shadow-none:none;
+/* motion */
+--ease:steps(4,end); /* @kind other */ /* pixel feel: stepped, not tweened */
+--ease-smooth:cubic-bezier(.2,0,0,1); /* @kind other */
+--dur-fast:120ms; /* @kind other */
+--dur:200ms; /* @kind other */
+}

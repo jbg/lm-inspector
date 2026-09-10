@@ -1,0 +1,78 @@
+pub mod cold;
+#[cfg(feature = "mlx")]
+pub mod live;
+
+pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    #[cfg(feature = "mlx")]
+    {
+        tauri::generate_handler![
+            cold::scan_model_cache,
+            cold::inspect_model,
+            cold::tokenize_preview,
+            cold::backend_availability,
+            cold::list_runs,
+            cold::get_run_journal,
+            cold::pin_run,
+            cold::delete_run,
+            live::load_model,
+            live::unload_model,
+            live::open_event_stream,
+            live::ack_events,
+            live::get_capture_discovery,
+            live::get_intervention_discovery,
+            live::get_speculative_intervention_discovery,
+            live::get_vocabulary_page,
+            live::encode_text,
+            live::decode_tokens,
+            live::get_telemetry,
+            live::start_run,
+            live::step_run,
+            live::continue_run,
+            live::resume_run,
+            live::pause_run,
+            live::cancel_run,
+            live::force_token,
+            live::clear_forced_token,
+            live::override_sampling,
+            live::get_sampling_state,
+            live::create_snapshot,
+            live::restore_snapshot,
+            live::fork_branch,
+            live::activate_branch,
+            live::release_snapshot,
+            live::release_branch,
+            live::counterfactual_from_step,
+            live::get_tree_status,
+            live::end_session,
+            live::start_speculative_run,
+            live::spec_step,
+            live::spec_run,
+            live::spec_pause,
+            live::spec_force_token,
+            live::spec_clear_forced,
+            live::spec_override_sampling,
+            live::spec_intervene,
+            live::spec_snapshot,
+            live::spec_restore,
+            live::spec_fork,
+            live::spec_exchange,
+            live::spec_release_snapshot,
+            live::spec_release_branch,
+            live::spec_snapshot_support,
+            live::end_speculative_run,
+        ]
+    }
+    #[cfg(not(feature = "mlx"))]
+    {
+        tauri::generate_handler![
+            cold::scan_model_cache,
+            cold::inspect_model,
+            cold::tokenize_preview,
+            cold::backend_availability,
+            cold::list_runs,
+            cold::get_run_journal,
+            cold::pin_run,
+            cold::delete_run,
+        ]
+    }
+}

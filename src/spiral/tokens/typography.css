@@ -1,0 +1,25 @@
+:root{
+--font-display:"Silkscreen","Source Code Pro",monospace; /* pixel display, always uppercase */
+--font-body:"Source Code Pro",ui-monospace,Menlo,monospace;
+--font-code:"Roboto Mono","Source Code Pro",monospace;
+/* scale — deck values at 720pt slide width, scaled to 1280px (×1.78) */
+--text-eyebrow:12px;  /* 7pt: slide eyebrow, uppercase mono */
+--text-sm:14px;
+--text-body:18px;     /* 10pt: body copy */
+--text-lg:25px;       /* 14pt: bullet points */
+--text-display-sm:28px; /* 16pt: card headings */
+--text-display-md:37px; /* 21pt: mission quote */
+--text-display-lg:64px; /* 36pt: slide titles */
+--text-display-xl:85px; /* 48pt: GDK badge */
+--leading-tight:1.1;
+--leading-display:1.25;
+--leading-body:1.4;
+--leading-loose:1.7;
+--tracking-display:0.08em;
+--tracking-eyebrow:0.1em;
+--weight-regular:400;
+--weight-medium:500;
+--weight-semibold:600;
+--weight-bold:700;
+--weight-extrabold:800;
+}

@@ -205,8 +205,21 @@ export function ForceCard({
     .filter((s) => s.nextPrediction <= predictionIndex)
     .sort((a, b) => b.nextPrediction - a.nextPrediction)[0];
   const replayCount = nearest ? predictionIndex - nearest.nextPrediction : undefined;
-  const unreachable = !isHead && !nearest;
   const piece = pieceFor(tokenId) ?? `#${tokenId}`;
+
+  // Why this force/branch can't run, if it can't. Observed runs have no live
+  // session; speculative supports head-forcing but not past-position branching
+  // (that flows through the controlled counterfactual path); controlled needs a
+  // snapshot at or before the position (position 0 is auto-snapshotted, so a
+  // gap here means snapshots were unavailable for the run).
+  const blockedReason: string | undefined = session.observedOnly
+    ? "This run is observed-only — forcing and branching need controlled or speculative mode, which this model's architecture doesn't support."
+    : !isHead && session.speculative
+      ? "Branching from a past position isn't available for speculative runs; you can still force the next token at the head."
+      : !isHead && !nearest
+        ? "No snapshot at or before this position — snapshots were unavailable for this run, so earlier positions can't be replayed into a branch."
+        : undefined;
+  const blocked = blockedReason !== undefined;
 
   const go = async () => {
     if (isHead) {
@@ -237,10 +250,9 @@ export function ForceCard({
           {replayCount === 1 ? "" : "s"} (exact inherited RNG)
         </div>
       )}
-      {unreachable && (
+      {blockedReason && (
         <div style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--accent)" }}>
-          NO SNAPSHOT COVERAGE at or before this position — earlier positions
-          only become branchable where ◆ pins exist
+          {blockedReason}
         </div>
       )}
       {!isHead && (
@@ -255,7 +267,7 @@ export function ForceCard({
         <Button size="sm" variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button size="sm" disabled={unreachable} onClick={() => void go()}>
+        <Button size="sm" disabled={blocked} onClick={() => void go()}>
           ■ {isHead ? "Force" : "Create branch"}
         </Button>
       </div>

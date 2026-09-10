@@ -94,7 +94,7 @@ function SpecStats({ journal }: { journal: RunJournal }) {
 }
 
 function LedgerRow({ block }: { block: SpecBlock }) {
-  const drafted = extractDraftIds(block.drafted);
+  const drafted = extractDraftIds(block.verification?.proposals ?? block.drafted);
   const dispositions = block.verification?.dispositions ?? [];
   const resolved = block.verification?.resolved !== false;
   return (

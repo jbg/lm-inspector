@@ -67,7 +67,7 @@ export function DraftLane({ derived }: { derived: DerivedRun }) {
           <span className="sp-eyebrow" style={{ color: "var(--text-muted)" }}>
             Last verify
           </span>
-          {extractDraftIds(lastBlock.drafted).map((id, i) => {
+          {extractDraftIds(lastBlock.verification.proposals ?? lastBlock.drafted).map((id, i) => {
             const d = lastBlock.verification!.dispositions![i];
             const accepted = d === "accepted";
             return (
@@ -88,7 +88,7 @@ export function DraftLane({ derived }: { derived: DerivedRun }) {
             );
           })}
           {lastBlock.committedTokenIds
-            .filter((id) => !extractDraftIds(lastBlock.drafted).includes(id))
+            .filter((id) => !extractDraftIds(lastBlock.verification!.proposals ?? lastBlock.drafted).includes(id))
             .map((id, i) => (
               <span key={`bonus-${i}`} title="target's pick (bonus/replacement)" style={{ border: "1px solid var(--accent-2)", background: "var(--accent-2)", color: "#fff", padding: "0 3px" }}>
                 <TokenCell piece={pieceFor(id) ?? `#${id}`} />

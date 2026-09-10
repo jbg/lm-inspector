@@ -85,7 +85,10 @@ export function Tape({ journal }: { journal: RunJournal }) {
     for (const b of derived.specBlocks) {
       const dispositions = b.verification?.dispositions;
       if (!dispositions) continue;
-      const ids = extractDraftIds(b.drafted);
+      // The verification record carries the judged proposal block itself;
+      // the step's own drafted field is null when drafting happened in an
+      // earlier phase record (stepping / lookahead).
+      const ids = extractDraftIds(b.verification?.proposals ?? b.drafted);
       const accepted = dispositions.filter((d) => d === "accepted").length;
       const ghosts = ids
         .map((id, i) => ({ tokenId: id, disposition: dispositions[i] ?? "discarded" }))

@@ -224,6 +224,24 @@ pub fn run_speculative(
         }
     };
 
+    // Exact prompt token ids for the tape: the speculative pipeline tokenizes
+    // internally and its step records never carry the prompt, so admit a
+    // throwaway observed preparation over the same chat (admission only, no
+    // execution) and stream the ids as a synthetic record.
+    let prompt_token_ids: Vec<u32> = {
+        let resolved = crate::budgets::resolve(&Default::default());
+        loaded
+            .model
+            .prepare_observed_chat(
+                &chat,
+                prepared.settings.clone(),
+                eredu_core::capture::CapturePlan::none(),
+                resolved.trace,
+            )
+            .map(|p| p.prompt_token_ids().to_vec())
+            .unwrap_or_default()
+    };
+
     // One-row model.logits capture admission (the only speculative capture).
     let admitted_capture = match &prepared.capture {
         Some(plan) => {
@@ -323,6 +341,11 @@ pub fn run_speculative(
             pinned: false,
             created_ms,
         });
+        drive_emitter.emit_serialize(
+            StreamKind::Speculative,
+            &root_label,
+            &serde_json::json!({ "kind": "spec_prompt", "prompt_token_ids": prompt_token_ids }),
+        );
         if let Some(reply) = start_reply.take() {
             let _ = reply.send(Ok(RunStartedDto {
                 run_id: root_label,

@@ -92,6 +92,16 @@ export function applyEnvelope(envelope: RunEventEnvelope): void {
   }
   if (envelope.stream === "speculative") {
     const journal = ensure(envelope.runId, true);
+    // Synthetic worker record: the speculative pipeline's own step records
+    // never carry the prompt, so it arrives once up front.
+    const maybePrompt = payload as { kind?: string; prompt_token_ids?: number[] };
+    if (maybePrompt.kind === "spec_prompt") {
+      if (maybePrompt.prompt_token_ids && journal.derived.promptTokenIds.length === 0) {
+        journal.derived.promptTokenIds = maybePrompt.prompt_token_ids;
+        bump(journal);
+      }
+      return;
+    }
     if (applySpecStep(journal.derived, payload as SpecStepRecord)) bump(journal);
     return;
   }

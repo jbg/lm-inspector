@@ -306,8 +306,43 @@ pub fn run_controlled(
     let semantic_supported = matches!(chat.semantic_support(), SemanticSupport::Supported);
     let use_text = prepared_spec.text_mode_requested || !semantic_supported;
 
+    // The dummy tool exists only for semantic snapshot coverage, and text
+    // admission rejects any tool declaration — so a template that falls back
+    // to text mode must be re-prepared genuinely tool-less.
+    let chat = if use_text && prepared_spec.injected_dummy_tools {
+        let toolless = ChatTemplateRequest {
+            tools: vec![],
+            tool_choice: ToolChoice::Auto,
+            ..prepared_spec.chat_request.clone()
+        };
+        match loaded.model.prepare_chat(toolless) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = reply.send(Err(IpcError::Control {
+                    op: "prepare_chat".into(),
+                    class: ControlErrorClass::Generation,
+                    message: e.to_string(),
+                    chain: error_chain(&e),
+                }));
+                return None;
+            }
+        }
+    } else {
+        chat
+    };
+
     // Explicitly requested observed mode: never attempt a controlled start.
     if spec.execution.as_deref() == Some("observed") {
+        // eredu has no observed text API — observed generation is semantic.
+        if use_text {
+            let _ = reply.send(Err(IpcError::Control {
+                op: "observed".into(),
+                class: ControlErrorClass::Generation,
+                message: "observed mode runs the semantic pipeline, and this chat template has no recognized format — run it in controlled mode instead (text fallback)".into(),
+                chain: vec![],
+            }));
+            return None;
+        }
         return run_observed_fallback(
             loaded,
             &spec,

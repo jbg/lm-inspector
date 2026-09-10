@@ -10,11 +10,10 @@ import { TokenCell } from "../../common/TokenCell";
 import { useUi } from "../../../state/ui";
 import { useSession } from "../../../state/session";
 import type { RunJournal } from "../../../state/journal/journal";
-import type { TokenEntry } from "../../../state/journal/reconcile";
+import type { DerivedRun, TokenEntry } from "../../../state/journal/reconcile";
 import { pieceFor, pieceVersion, prefetchPieces, subscribePieces } from "../../../lib/pieceCache";
 import { confidenceStep } from "../../../viz/viz";
 import { topkForPrediction, chosenProbability, chosenSignals } from "../dock/alternates";
-import { DraftLane } from "./DraftLane";
 import { extractDraftIds } from "../dock/StatsView";
 
 interface DraftGhost {
@@ -172,6 +171,7 @@ export function Tape({ journal }: { journal: RunJournal }) {
             draftGhosts={draftGhosts}
             tail
           />
+          {derived.speculative && <InlineDraft derived={derived} />}
           {derived.status === "running" && <span style={{ fontFamily: "var(--font-code)" }}>▌</span>}
         </div>
 
@@ -182,9 +182,6 @@ export function Tape({ journal }: { journal: RunJournal }) {
             <pre style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{call.argsJson}</pre>
           </div>
         ))}
-
-        {/* speculative draft lane */}
-        {derived.speculative && <DraftLane derived={derived} />}
 
         {/* abandoned segments (restores) */}
         {derived.abandoned.map((seg, i) => (
@@ -209,6 +206,47 @@ export function Tape({ journal }: { journal: RunJournal }) {
 
       <ConfidenceStrip journal={journal} />
     </Card>
+  );
+}
+
+/** Tentative draft tokens shown inline at the streaming head: dimmed while
+ * proposed, slightly firmer while the target verifies them; on resolve they
+ * become committed tokens or struck rejection ghosts in place. */
+function InlineDraft({ derived }: { derived: DerivedRun }) {
+  const pending = extractDraftIds(derived.pendingDraft);
+  const optimistic = extractDraftIds(derived.pendingOptimistic);
+  if (pending.length === 0 && optimistic.length === 0) return null;
+  const verifying = derived.specPhase === "verifying";
+  return (
+    <>
+      {pending.map((id, i) => (
+        <span
+          key={`draft-${i}`}
+          title={
+            verifying
+              ? "draft — being verified by the target"
+              : "draft — tentative, awaiting verification"
+          }
+          style={{
+            opacity: verifying ? 0.65 : 0.45,
+            borderBottom: verifying
+              ? "1.5px solid var(--accent-2)"
+              : "1.5px dashed var(--spiral-gray-400)",
+          }}
+        >
+          <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
+        </span>
+      ))}
+      {optimistic.map((id, i) => (
+        <span
+          key={`opt-${i}`}
+          title="lookahead — optimistic next-block draft, may be discarded wholesale"
+          style={{ opacity: 0.3, borderBottom: "1.5px dotted var(--spiral-gray-400)" }}
+        >
+          <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
+        </span>
+      ))}
+    </>
   );
 }
 

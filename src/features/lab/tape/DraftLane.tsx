@@ -14,7 +14,7 @@ export function DraftLane({ derived }: { derived: DerivedRun }) {
   const pending = extractDraftIds(derived.pendingDraft);
   const lastBlock = derived.specBlocks[derived.specBlocks.length - 1];
 
-  if (pending.length === 0 && !lastBlock) return null;
+  if (pending.length === 0 && !lastBlock && derived.specPhase === undefined) return null;
 
   return (
     <div style={{ borderTop: "2px solid var(--accent-2)", marginTop: 12, paddingTop: 8 }}>
@@ -24,14 +24,43 @@ export function DraftLane({ derived }: { derived: DerivedRun }) {
       {pending.length > 0 && (
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
           <span className="sp-eyebrow" style={{ color: "var(--text-muted)" }}>
-            Drafted (tentative)
+            {derived.specPhase === "verifying" ? "Verifying draft…" : "Drafted (tentative)"}
           </span>
           {pending.map((id, i) => (
-            <span key={i} style={{ border: "1px dashed var(--accent-2)", padding: "0 3px", opacity: 0.7 }}>
+            <span
+              key={i}
+              style={{
+                border: derived.specPhase === "verifying" ? "1px solid var(--accent-2)" : "1px dashed var(--accent-2)",
+                padding: "0 3px",
+                opacity: 0.7,
+              }}
+            >
+              <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
+            </span>
+          ))}
+          {derived.specPhase === "verifying" && (
+            <span className="sp-eyebrow" style={{ color: "var(--accent-2)" }}>
+              — target checking the draft
+            </span>
+          )}
+        </div>
+      )}
+      {extractDraftIds(derived.pendingOptimistic).length > 0 && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+          <span className="sp-eyebrow" style={{ color: "var(--text-muted)" }}>
+            Lookahead (next block, optimistic)
+          </span>
+          {extractDraftIds(derived.pendingOptimistic).map((id, i) => (
+            <span key={i} style={{ border: "1px dotted var(--accent-2)", padding: "0 3px", opacity: 0.5 }}>
               <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
             </span>
           ))}
         </div>
+      )}
+      {pending.length === 0 && derived.specPhase === "working" && (
+        <p className="sp-eyebrow" style={{ color: "var(--text-muted)", margin: 0 }}>
+          Working — prefill or scheduling, nothing proposed yet
+        </p>
       )}
       {lastBlock?.verification?.dispositions && (
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>

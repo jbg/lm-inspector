@@ -282,6 +282,11 @@ export interface DerivedRun {
   abandoned: AbandonedSegment[];
   specBlocks: SpecBlock[];
   pendingDraft?: unknown;
+  /** What the most recent speculative step did — each eredu step() is one
+   * scheduler phase, not one token. */
+  specPhase?: "drafted" | "verifying" | "resolved" | "working";
+  /** Lookahead: a next-block draft proposed while pendingDraft verifies. */
+  pendingOptimistic?: unknown;
   lastSeq?: I64;
   /** Full generated text (committed view), reasoning excluded. */
   text: string;
@@ -550,10 +555,29 @@ export function applySpecStep(derived: DerivedRun, step: SpecStepRecord): boolea
       reasoning: false,
     });
   }
-  if (step.drafted != null && committed.length === 0 && !step.verification) {
-    derived.pendingDraft = step.drafted;
-  } else {
+  // Phase narration: a step record with neither a draft delta nor a
+  // verification is in-flight work (target verification submitted, prefill,
+  // scheduling). The tentative draft stays visible until it is resolved —
+  // clearing it on the in-flight step made drafts appear, vanish, then
+  // resurface as committed tokens.
+  if (step.verification || committed.length > 0) {
     derived.pendingDraft = undefined;
+    derived.pendingOptimistic = undefined;
+    derived.specPhase = "resolved";
+  } else if (step.drafted != null) {
+    if (derived.pendingDraft != null) {
+      // A second draft while one is outstanding is the lookahead branch:
+      // the next block drafted while the target verifies the current one.
+      derived.pendingOptimistic = step.drafted;
+      derived.specPhase = "verifying";
+    } else {
+      derived.pendingDraft = step.drafted;
+      derived.specPhase = "drafted";
+    }
+  } else if (derived.pendingDraft != null) {
+    derived.specPhase = "verifying";
+  } else {
+    derived.specPhase = "working";
   }
   if (step.verification || committed.length > 0) {
     derived.specBlocks.push({

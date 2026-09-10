@@ -16,7 +16,8 @@ export interface SamplingDraft {
   minP?: number;
   repetitionPenalty?: number;
   maxNewTokens?: number;
-  seed: number;
+  /** undefined = a fresh random seed is generated when the run starts. */
+  seed?: number;
   strategy: "standard" | "mirostatV2";
   tau: number;
   eta: number;
@@ -105,7 +106,7 @@ export const usePlans = create<PlansState>((set) => ({
   // checkpoint's generation_config. Only the seed is ours (request-level;
   // checkpoints carry no seed).
   sampling: {
-    seed: 42,
+    seed: undefined,
     strategy: "standard",
     tau: 5,
     eta: 0.1,
@@ -331,7 +332,8 @@ export function buildStartSpec(
       s.strategy === "mirostatV2"
         ? { kind: "mirostatV2", tau: s.tau, eta: s.eta }
         : { kind: "standard" },
-    seed: s.seed,
+    // Empty seed = a fresh random one per run (reproducible once shown in the run).
+    seed: s.seed ?? Math.floor(Math.random() * 2 ** 31),
     stops: [],
     capture: buildCapturePlan(state.capture, layerOutputPaths, routingPaths, speculative),
     intervention: buildInterventionPlan(state.interventions),

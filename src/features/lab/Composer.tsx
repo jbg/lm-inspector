@@ -295,17 +295,15 @@ function SamplingPanel() {
         <Input
           label="Seed"
           type="number"
-          value={String(s.seed)}
-          onChange={(e) => plans.setSampling({ seed: Number((e.target as HTMLInputElement).value) || 0 })}
+          placeholder="Random"
+          hint="blank = a fresh random seed each run"
+          value={s.seed === undefined ? "" : String(s.seed)}
+          onChange={(e) => {
+            const raw = (e.target as HTMLInputElement).value.trim();
+            plans.setSampling({ seed: raw === "" ? undefined : Number(raw) });
+          }}
           style={{ flex: 1, minWidth: 0, borderLeft: "3px solid transparent", paddingLeft: 6 }}
         />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => plans.setSampling({ seed: Math.floor(Math.random() * 2 ** 31) })}
-        >
-          ⟳ Random
-        </Button>
       </div>
       <div style={{ marginTop: 12 }}>
         <RadioGroup

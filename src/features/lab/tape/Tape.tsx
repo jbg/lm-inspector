@@ -60,7 +60,13 @@ export function Tape({ journal }: { journal: RunJournal }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [derived, selection, select, clearSelection]);
 
-  const snapshotTicks = useMemo(() => new Set(derived.snapshots.map((s) => s.nextPrediction)), [derived.snapshots]);
+  // derived.* arrays are mutated in place by the reconciler (stable refs), so
+  // memos key on the journal version — bumped on every change — not the arrays.
+  const snapshotTicks = useMemo(
+    () => new Set(derived.snapshots.map((s) => s.nextPrediction)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [journal.version],
+  );
   const samplingMarksAt = useMemo(() => {
     const map = new Map<number, string>();
     for (const m of derived.samplingMarks) {
@@ -69,13 +75,15 @@ export function Tape({ journal }: { journal: RunJournal }) {
       map.set(m.nextPrediction, `⌁ ${t !== undefined && t !== null ? `temp→${t}` : ""}${r !== undefined && r !== null ? ` seed→${r}` : ""}`);
     }
     return map;
-  }, [derived.samplingMarks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journal.version]);
 
   // Speculative rejections, keyed by the prediction index where the target
   // overrode the draft: a block's first non-accepted proposal sat at
   // firstPrediction + acceptedCount, so its ghosts render just before the
   // replacement token that displaced them.
-  const draftGhosts = useMemo(() => computeDraftGhosts(derived), [derived.specBlocks]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const draftGhosts = useMemo(() => computeDraftGhosts(derived), [journal.version]);
 
   const reasoningTokens = derived.tokens.filter((t) => t.reasoning);
   const bodyTokens = derived.tokens;

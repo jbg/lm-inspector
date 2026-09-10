@@ -57,8 +57,8 @@ export function SignalsView({ journal }: { journal: RunJournal }) {
         )}
       </div>
 
-      <LayerTrajectory derived={derived} predictionIndex={predictionIndex} />
-      <RoutingLoom derived={derived} />
+      <LayerTrajectory derived={derived} predictionIndex={predictionIndex} version={journal.version} />
+      <RoutingLoom derived={derived} version={journal.version} />
     </div>
   );
 }
@@ -167,7 +167,7 @@ function extractNumbers(value: unknown): unknown[] {
 
 /** Layer trajectory: x = layer order (from capture selection ids), y = the
  * chosen stat at the selected token; ghost = run median. */
-function LayerTrajectory({ derived, predictionIndex }: { derived: DerivedRun; predictionIndex?: number }) {
+function LayerTrajectory({ derived, predictionIndex, version }: { derived: DerivedRun; predictionIndex?: number; version: number }) {
   const [stat, setStat] = useState<"rms" | "mean" | "min" | "max">("rms");
   const data = useMemo(() => {
     // Collect layer-summary selections (ids "traj-<path>") in path order.
@@ -205,7 +205,9 @@ function LayerTrajectory({ derived, predictionIndex }: { derived: DerivedRun; pr
       })
       .filter((i) => i >= 0);
     return { selected, ghost, nanMarkers, count: paths.length };
-  }, [derived, predictionIndex, stat]);
+    // derived is mutated in place; key on the journal version (bumped per change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, predictionIndex, stat]);
 
   if (!data) return null;
   return (
@@ -239,7 +241,7 @@ function layerIndex(path: string): number {
 
 /** MoE routing loom: x = token position, y = expert id; filled square when
  * selected, size stepped by score; top-1 magenta. */
-function RoutingLoom({ derived }: { derived: DerivedRun }) {
+function RoutingLoom({ derived, version }: { derived: DerivedRun; version: number }) {
   const selection = useUi((s) => s.selection);
   const select = useUi((s) => s.select);
   const loom = useMemo(() => {
@@ -277,7 +279,9 @@ function RoutingLoom({ derived }: { derived: DerivedRun }) {
     });
     if (cells.length === 0) return undefined;
     return { positions, cells, rows: maxExpert + 1 };
-  }, [derived]);
+    // derived is mutated in place; key on the journal version (bumped per change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   if (!loom) return null;
   const highlightColumn =

@@ -25,6 +25,7 @@ fn main() {
 
     let target = std::env::args().nth(1).expect("target path");
     let drafter = std::env::args().nth(2).filter(|s| s != "-");
+    let embedded = drafter.as_deref() == Some("embedded");
     let steps: u32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(12);
 
     let sink = Arc::new(CollectingSink(Mutex::new(Vec::new())));
@@ -37,12 +38,16 @@ fn main() {
         target.clone().into(),
         LoadPlanDto {
             device: DeviceDto::Accelerator,
-            drafting: drafter.clone().map(|model_path| DraftingDto::External {
-                model_path,
-                max_draft_tokens: 4,
-                lookahead: true,
-                adaptive_lookahead: false,
-            }),
+            drafting: if embedded {
+                Some(DraftingDto::Embedded { max_draft_tokens: 1, lookahead: false, adaptive_lookahead: false })
+            } else {
+                drafter.clone().filter(|s| s != "embedded").map(|model_path| DraftingDto::External {
+                    model_path,
+                    max_draft_tokens: 4,
+                    lookahead: true,
+                    adaptive_lookahead: false,
+                })
+            },
         },
         1,
         sink.clone(),
@@ -78,7 +83,7 @@ fn main() {
         budgets: None,
         created_ms: None,
     };
-    if drafter.is_some() {
+    if drafter.is_some() {  // embedded or external -> speculative session
         let started = handle
             .request(|reply| Command::StartSpeculativeRun { spec: Box::new(spec), reply })
             .expect("start failed");

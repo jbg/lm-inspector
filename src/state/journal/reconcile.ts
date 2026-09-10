@@ -565,11 +565,15 @@ export function applySpecStep(derived: DerivedRun, step: SpecStepRecord): boolea
     derived.pendingOptimistic = undefined;
     derived.specPhase = "resolved";
   } else if (step.drafted != null) {
-    if (derived.pendingDraft != null) {
-      // A second draft while one is outstanding is the lookahead branch:
-      // the next block drafted while the target verifies the current one.
+    // An optimistic (lookahead) block carries the assumed future prefix it
+    // was drafted against; an ordinary proposal does not. Fall back to the
+    // draft-while-pending heuristic for records without the marker.
+    const assumed =
+      typeof step.drafted === "object" &&
+      (step.drafted as Record<string, unknown>).assumed_prefix != null;
+    if (assumed || derived.pendingDraft != null) {
       derived.pendingOptimistic = step.drafted;
-      derived.specPhase = "verifying";
+      derived.specPhase = derived.pendingDraft != null ? "verifying" : "drafted";
     } else {
       derived.pendingDraft = step.drafted;
       derived.specPhase = "drafted";

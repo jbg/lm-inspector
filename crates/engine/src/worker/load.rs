@@ -164,6 +164,11 @@ pub fn load_model(
             Some(std::sync::Arc::new(tokenizer.clone()));
     }
 
+    let draft_capacity = match &drafting_plan_value {
+        DraftingPlan::Embedded { max_draft_tokens, .. }
+        | DraftingPlan::External { max_draft_tokens, .. } => Some(*max_draft_tokens as u32),
+        _ => None,
+    };
     let drafting_label = match &drafting_plan_value {
         DraftingPlan::Disabled => "disabled".to_string(),
         DraftingPlan::Embedded { max_draft_tokens, .. } => format!("embedded({max_draft_tokens})"),
@@ -237,6 +242,7 @@ pub fn load_model(
         intervention_discovery,
         speculative_intervention_discovery,
         control_support,
+        draft_capacity,
     };
     stage("ready");
 

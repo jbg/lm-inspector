@@ -125,6 +125,8 @@ pub struct LoadedModelInfoDto {
     /// Why controlled execution (step/pause/force/snapshots) is unavailable
     /// for this architecture, probed at load; None = controlled runs work.
     pub control_support: Option<String>,
+    /// Judged draft window (max_draft_tokens) when drafting was realized.
+    pub draft_capacity: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

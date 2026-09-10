@@ -37,6 +37,8 @@ export interface LoadedModelInfo {
   /** Why controlled execution is unavailable for this architecture (probed
    * at load); absent = controlled runs work. */
   controlSupport?: string;
+  /** Judged draft window (max_draft_tokens) when drafting was realized. */
+  draftCapacity?: number;
 }
 
 export interface StartRunSpec {

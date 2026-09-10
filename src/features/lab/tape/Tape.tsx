@@ -209,17 +209,48 @@ export function Tape({ journal }: { journal: RunJournal }) {
   );
 }
 
+/** A proposal block aligned to the output: block drafters (e.g. DFlash)
+ * emit a whole block that may start before the committed head (anchor
+ * overlap) and run past the judged draft window with unverifiable filler. */
+function proposalView(drafted: unknown): { position?: number; ids: number[] } | undefined {
+  const ids = extractDraftIds(drafted);
+  if (ids.length === 0) return undefined;
+  const position =
+    typeof drafted === "object" && drafted !== null
+      ? (drafted as Record<string, unknown>).position
+      : undefined;
+  return { position: typeof position === "number" ? position : undefined, ids };
+}
+
 /** Tentative draft tokens shown inline at the streaming head: dimmed while
  * proposed, slightly firmer while the target verifies them; on resolve they
- * become committed tokens or struck rejection ghosts in place. */
+ * become committed tokens or struck rejection ghosts in place. Only the
+ * judged draft window renders as tokens — a block drafter's unverifiable
+ * tail collapses to a count, and its overlap with committed output is
+ * skipped entirely. */
 function InlineDraft({ derived }: { derived: DerivedRun }) {
-  const pending = extractDraftIds(derived.pendingDraft);
-  const optimistic = extractDraftIds(derived.pendingOptimistic);
-  if (pending.length === 0 && optimistic.length === 0) return null;
+  const capacity = useSession((s) =>
+    s.load.phase === "loaded" ? s.load.info.draftCapacity : undefined,
+  );
+  const pending = proposalView(derived.pendingDraft);
+  const optimistic = proposalView(derived.pendingOptimistic);
+  if (!pending && !optimistic) return null;
   const verifying = derived.specPhase === "verifying";
+  const next =
+    derived.tokens.length > 0 ? derived.tokens[derived.tokens.length - 1].predictionIndex + 1 : 0;
+
+  const windowed = (view: { position?: number; ids: number[] }) => {
+    const overlap = view.position !== undefined ? Math.max(0, next - view.position) : 0;
+    const upcoming = view.ids.slice(overlap);
+    const shown = capacity !== undefined ? upcoming.slice(0, capacity) : upcoming;
+    return { shown, tail: upcoming.length - shown.length };
+  };
+
+  const p = pending ? windowed(pending) : undefined;
+  const o = optimistic ? windowed(optimistic) : undefined;
   return (
     <>
-      {pending.map((id, i) => (
+      {p?.shown.map((id, i) => (
         <span
           key={`draft-${i}`}
           title={
@@ -237,7 +268,16 @@ function InlineDraft({ derived }: { derived: DerivedRun }) {
           <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
         </span>
       ))}
-      {optimistic.map((id, i) => (
+      {p !== undefined && p.tail > 0 && (
+        <span
+          className="sp-eyebrow"
+          title="parallel block predictions beyond the judged draft window — never verified, discarded on resolve"
+          style={{ color: "var(--text-muted)", opacity: 0.6, margin: "0 4px" }}
+        >
+          ⋯+{p.tail}
+        </span>
+      )}
+      {o?.shown.map((id, i) => (
         <span
           key={`opt-${i}`}
           title="lookahead — optimistic next-block draft, may be discarded wholesale"
@@ -246,6 +286,15 @@ function InlineDraft({ derived }: { derived: DerivedRun }) {
           <TokenCell piece={pieceFor(id) ?? `#${id}`} muted />
         </span>
       ))}
+      {o !== undefined && o.tail > 0 && (
+        <span
+          className="sp-eyebrow"
+          title="parallel block predictions beyond the judged draft window — never verified, discarded on resolve"
+          style={{ color: "var(--text-muted)", opacity: 0.4, margin: "0 4px" }}
+        >
+          ⋯+{o.tail}
+        </span>
+      )}
     </>
   );
 }

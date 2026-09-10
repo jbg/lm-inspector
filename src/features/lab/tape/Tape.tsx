@@ -15,6 +15,12 @@ import { pieceFor, pieceVersion, prefetchPieces, subscribePieces } from "../../.
 import { confidenceStep } from "../../../viz/viz";
 import { topkForPrediction, chosenProbability, chosenSignals } from "../dock/alternates";
 import { DraftLane } from "./DraftLane";
+import { extractDraftIds } from "../dock/StatsView";
+
+interface DraftGhost {
+  tokenId: number;
+  disposition: string;
+}
 
 export function Tape({ journal }: { journal: RunJournal }) {
   const derived = journal.derived;
@@ -69,6 +75,27 @@ export function Tape({ journal }: { journal: RunJournal }) {
     }
     return map;
   }, [derived.samplingMarks]);
+
+  // Speculative rejections, keyed by the prediction index where the target
+  // overrode the draft: a block's first non-accepted proposal sat at
+  // firstPrediction + acceptedCount, so its ghosts render just before the
+  // replacement token that displaced them.
+  const draftGhosts = useMemo(() => {
+    const map = new Map<number, DraftGhost[]>();
+    for (const b of derived.specBlocks) {
+      const dispositions = b.verification?.dispositions;
+      if (!dispositions) continue;
+      const ids = extractDraftIds(b.drafted);
+      const accepted = dispositions.filter((d) => d === "accepted").length;
+      const ghosts = ids
+        .map((id, i) => ({ tokenId: id, disposition: dispositions[i] ?? "discarded" }))
+        .filter((g) => g.disposition !== "accepted");
+      if (ghosts.length === 0) continue;
+      const at = b.firstPrediction + accepted;
+      map.set(at, [...(map.get(at) ?? []), ...ghosts]);
+    }
+    return map;
+  }, [derived.specBlocks]);
 
   const reasoningTokens = derived.tokens.filter((t) => t.reasoning);
   const bodyTokens = derived.tokens;
@@ -127,7 +154,7 @@ export function Tape({ journal }: { journal: RunJournal }) {
               Thinking · {reasoningTokens.length} tokens
             </summary>
             <div style={{ lineHeight: 2, color: "var(--text-muted)" }}>
-              <TapeTokens tokens={reasoningTokens} journal={journal} snapshotTicks={snapshotTicks} samplingMarks={samplingMarksAt} />
+              <TapeTokens tokens={reasoningTokens} journal={journal} snapshotTicks={snapshotTicks} samplingMarks={samplingMarksAt} draftGhosts={draftGhosts} />
             </div>
           </details>
         )}
@@ -139,6 +166,8 @@ export function Tape({ journal }: { journal: RunJournal }) {
             journal={journal}
             snapshotTicks={snapshotTicks}
             samplingMarks={samplingMarksAt}
+            draftGhosts={draftGhosts}
+            tail
           />
           {derived.status === "running" && <span style={{ fontFamily: "var(--font-code)" }}>▌</span>}
         </div>
@@ -180,20 +209,52 @@ export function Tape({ journal }: { journal: RunJournal }) {
   );
 }
 
+function DraftGhostChips({ ghosts, at }: { ghosts: DraftGhost[]; at: number }) {
+  return (
+    <>
+      {ghosts.map((g, i) => (
+        <span
+          key={`ghost-${at}-${i}`}
+          title={
+            g.disposition === "rejected"
+              ? `draft rejected at ${at} — the target sampled a different token here`
+              : `draft discarded at ${at} — rolled back unjudged after the rejection`
+          }
+          style={{
+            border: "1px dashed var(--accent)",
+            color: "var(--accent)",
+            textDecoration: "line-through",
+            padding: "0 2px",
+            margin: "0 2px",
+            opacity: g.disposition === "discarded" ? 0.45 : 0.8,
+          }}
+        >
+          <TokenCell piece={pieceFor(g.tokenId) ?? `#${g.tokenId}`} muted />
+        </span>
+      ))}
+    </>
+  );
+}
+
 function TapeTokens({
   tokens,
   journal,
   snapshotTicks,
   samplingMarks,
+  draftGhosts,
+  tail,
 }: {
   tokens: TokenEntry[];
   journal: RunJournal;
   snapshotTicks: Set<number>;
   samplingMarks: Map<number, string>;
+  draftGhosts?: Map<number, DraftGhost[]>;
+  tail?: boolean;
 }) {
   const selection = useUi((s) => s.selection);
   const select = useUi((s) => s.select);
   const derived = journal.derived;
+  const lastIndex = tokens.length > 0 ? tokens[tokens.length - 1].predictionIndex : -1;
   return (
     <>
       {tokens.map((t) => {
@@ -217,8 +278,10 @@ function TapeTokens({
           ...(t.forced ? ["forced"] : []),
           ...(t.replay ? ["replayed"] : []),
         ];
+        const ghosts = draftGhosts?.get(t.predictionIndex);
         return (
           <span key={`${String(t.seq)}-${t.predictionIndex}`}>
+            {ghosts && <DraftGhostChips ghosts={ghosts} at={t.predictionIndex} />}
             {mark && (
               <span className="sp-eyebrow" style={{ color: "var(--accent-2)", margin: "0 6px" }}>
                 {mark}
@@ -244,6 +307,12 @@ function TapeTokens({
           </span>
         );
       })}
+      {/* Rejections at the streaming head (replacement not yet committed). */}
+      {tail &&
+        draftGhosts &&
+        [...draftGhosts.entries()]
+          .filter(([at]) => at > lastIndex)
+          .map(([at, ghosts]) => <DraftGhostChips key={`tail-${at}`} ghosts={ghosts} at={at} />)}
     </>
   );
 }

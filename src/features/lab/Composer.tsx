@@ -10,7 +10,6 @@ import { Input } from "../../goose/ui";
 import { Switch } from "../../goose/ui";
 import { RadioGroup } from "../../goose/ui";
 import { Tag } from "../../goose/ui";
-import { useEffect } from "react";
 import { useSession } from "../../state/session";
 import { useUi } from "../../state/ui";
 import { Select } from "../../goose/ui";
@@ -27,12 +26,10 @@ export function Composer() {
   const draftingAvailable = (info?.drafting ?? "disabled") !== "disabled";
   const speculative = draftingAvailable && plans.useDrafting;
   const controlUnsupported = info?.controlSupport;
-
-  // A model without controlled execution can only run observed.
-  useEffect(() => {
-    if (controlUnsupported && plans.execution === "controlled") plans.setExecution("observed");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlUnsupported, plans.execution]);
+  // Effective session mode: a model without controlled execution can only run
+  // observed, so force it regardless of the stored preference (derived, not a
+  // coercing effect — the radio and the run stay in sync with no stale frame).
+  const execution = controlUnsupported ? "observed" : plans.execution;
 
   const { layerOutputPaths, routingPaths } = useMemo(() => {
     const points = session.captureDiscovery?.catalog?.points ?? [];
@@ -45,7 +42,7 @@ export function Composer() {
   }, [session.captureDiscovery]);
 
   const start = async () => {
-    const spec = buildStartSpec(plans, layerOutputPaths, routingPaths, speculative);
+    const spec = buildStartSpec({ ...plans, execution }, layerOutputPaths, routingPaths, speculative);
     const started = await session.startRun(spec, speculative);
     if (started) {
       useUi.getState().viewRun(started.runId);
@@ -146,7 +143,7 @@ export function Composer() {
                 },
                 { value: "observed", label: "Observed — free-run to completion" },
               ]}
-              value={plans.execution}
+              value={execution}
               onChange={(v) => plans.setExecution(v as "controlled" | "observed")}
             />
             {controlUnsupported !== undefined && (

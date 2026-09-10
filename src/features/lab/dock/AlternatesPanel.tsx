@@ -71,9 +71,18 @@ export function AlternatesPanel({ journal }: { journal: RunJournal }) {
 
 function MissingCapture({ derived, predictionIndex }: { derived: RunJournal["derived"]; predictionIndex: number }) {
   const step = derived.capturesByPrediction.get(predictionIndex);
-  const reason = step
-    ? "no top-candidates selection captured at this position"
-    : "no captures recorded at this position (capture off, budget skip, or a prompt token)";
+  // Surface the record's own skip reason when the step exists — "no capture"
+  // hides the difference between an unscheduled position and a budget skip.
+  const skip = step?.records
+    .map((r) => r.outcome as { kind?: string; reason?: { kind?: string; budget?: string; cumulative?: boolean } })
+    .find((o) => o?.kind === "skipped");
+  const reason = !step
+    ? "no captures recorded at this position (capture off, budget skip, or a prompt token)"
+    : skip?.reason?.kind === "limit"
+      ? `the ${skip.reason.cumulative ? "cumulative" : "per-step"} ${skip.reason.budget ?? ""} budget skipped capture here — raise the capture limits and rerun`
+      : skip?.reason?.kind === "schedule"
+        ? "the capture schedule did not select this position"
+        : "no top-candidates selection captured at this position";
   return (
     <p style={{ fontFamily: "var(--font-code)", fontSize: 12, color: "var(--text-muted)" }}>
       No alternates — {reason}

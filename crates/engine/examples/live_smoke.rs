@@ -83,7 +83,7 @@ fn main() {
             "selections": [{
                 "id": "topk",
                 "path": "model.logits",
-                "schedule": {"prefill": false, "decode": true, "first_prediction": 0, "end_prediction": null, "every": 1},
+                "schedule": {"prefill": true, "decode": true, "first_prediction": 0, "end_prediction": null, "every": 1},
                 "slices": [],
                 "transform": {"kind": "top_candidates", "count": 8}
             }],
@@ -126,13 +126,27 @@ fn main() {
     );
 
     // Counterfactual: pick an alternative token at position 2 from the journal's
-    // captured candidates.
+    // captured candidates. Position 0 is the prefill prediction — its top-k must
+    // be captured too (the estimate charges the logits row, not the whole
+    // prefill source), or the first token has no alternates in the UI.
     let page = journal.page(&started.run_id, 0, 4096).expect("journal page");
     let mut alternative: Option<u32> = None;
     let mut chosen_at_2: Option<u32> = None;
+    let mut prefill_candidates = 0usize;
     for env in &page.envelopes {
         let v: serde_json::Value = serde_json::from_str(&env.payload).unwrap();
         let event = &v["generation"]["event"];
+        if event["kind"] == "token" && event["prediction_index"] == 0 {
+            let record = &event["captures"]["records"][0];
+            prefill_candidates = record["payload"]["value"]["candidates"]
+                .as_array()
+                .map_or(0, Vec::len);
+            assert!(
+                prefill_candidates > 0,
+                "no candidates captured at prediction 0 (outcome: {})",
+                record["outcome"]
+            );
+        }
         if event["kind"] == "token" && event["prediction_index"] == 2 {
             chosen_at_2 = event["token_id"].as_u64().map(|t| t as u32);
             if let Some(cands) = event["captures"]["records"][0]["payload"]["value"]["candidates"].as_array() {
@@ -143,6 +157,7 @@ fn main() {
             }
         }
     }
+    println!("prediction 0 candidates: {prefill_candidates}");
     let (chosen, alt) = (chosen_at_2.expect("token at 2"), alternative.expect("alternative at 2"));
     println!("counterfactual at position 2: {chosen} → {alt}");
     let result = handle

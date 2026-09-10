@@ -127,6 +127,15 @@ body {
    text-decoration on a wrapping span does not propagate into buttons. */
 .tok[data-struck="true"] { text-decoration: line-through 1.5px; }
 .tok[data-muted="true"] { opacity: 0.55; }
+/* Special/control tokens (Harmony/ATEM framing): a quiet monospace chip so
+   structure is visibly distinct from content, not undifferentiated text. */
+.tok[data-special="true"]:not([data-selected="true"]) {
+  color: var(--color-text-tertiary);
+  background: var(--color-background-tertiary);
+  border-radius: var(--border-radius-xs);
+  font-size: 11px;
+  padding: 0 3px;
+}
 .tok .glyph { color: var(--color-text-tertiary); }
 .tok[data-selected="true"] .glyph { color: color-mix(in srgb, var(--color-text-inverse) 65%, transparent); }
 

@@ -5,6 +5,13 @@
 import { memo } from "react";
 import { tokenSegments } from "../../lib/tokenText";
 
+/** A single special/control token, e.g. "<|message|>", "<|start|>". These are
+ * framing, not content; the tape marks them so structured formats (Harmony,
+ * ATEM) don't read as gibberish among ordinary tokens. */
+function isSpecialToken(piece: string): boolean {
+  return /^<\|.*\|>$/.test(piece) || /^<atem:[^>]*>$/.test(piece);
+}
+
 export interface TokenCellProps {
   piece: string;
   selected?: boolean;
@@ -38,11 +45,13 @@ export const TokenCell = memo(function TokenCell({
   title,
   onClick,
 }: TokenCellProps) {
+  const special = isSpecialToken(piece);
   const segments = tokenSegments(piece);
   return (
     <button
       type="button"
       className="tok"
+      data-special={special || undefined}
       data-selected={selected || undefined}
       data-forced={forced || undefined}
       data-spec={speculative || undefined}

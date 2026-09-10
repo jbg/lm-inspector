@@ -226,13 +226,12 @@ function DraftGhostChips({ ghosts, at }: { ghosts: DraftGhost[]; at: number }) {
           style={{
             border: "1px dashed var(--accent)",
             color: "var(--accent)",
-            textDecoration: "line-through",
             padding: "0 2px",
             margin: "0 2px",
             opacity: g.disposition === "discarded" ? 0.45 : 0.8,
           }}
         >
-          <TokenCell piece={pieceFor(g.tokenId) ?? `#${g.tokenId}`} muted />
+          <TokenCell piece={pieceFor(g.tokenId) ?? `#${g.tokenId}`} muted struck />
         </span>
       ))}
     </>

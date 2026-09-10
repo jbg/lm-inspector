@@ -123,6 +123,9 @@ body {
   text-decoration: line-through;
   opacity: 0.55;
 }
+/* Crossed out (rejected/discarded draft proposals). On the button itself:
+   text-decoration on a wrapping span does not propagate into buttons. */
+.tok[data-struck="true"] { text-decoration: line-through 1.5px; }
 .tok[data-muted="true"] { opacity: 0.55; }
 .tok .glyph { color: var(--color-text-tertiary); }
 .tok[data-selected="true"] .glyph { color: color-mix(in srgb, var(--color-text-inverse) 65%, transparent); }

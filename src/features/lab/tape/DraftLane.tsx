@@ -78,12 +78,11 @@ export function DraftLane({ derived }: { derived: DerivedRun }) {
                   border: `1px solid ${accepted ? "var(--text)" : "var(--accent)"}`,
                   background: accepted ? "var(--text)" : "transparent",
                   color: accepted ? "#fff" : "var(--accent)",
-                  textDecoration: accepted ? "none" : "line-through",
                   padding: "0 3px",
                   opacity: d === "discarded" ? 0.4 : 1,
                 }}
               >
-                <TokenCell piece={pieceFor(id) ?? `#${id}`} />
+                <TokenCell piece={pieceFor(id) ?? `#${id}`} struck={!accepted} />
               </span>
             );
           })}

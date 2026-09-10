@@ -112,7 +112,7 @@ function LedgerRow({ block }: { block: SpecBlock }) {
             const deco = d === "rejected" || d === "discarded" ? "line-through" : "none";
             return (
               <span key={i} style={{ border: `1px solid ${color}`, color, textDecoration: deco, padding: "0 3px" }} title={d ?? "pending"}>
-                <TokenCell piece={pieceFor(id) ?? `#${id}`} muted={d !== "accepted"} />
+                <TokenCell piece={pieceFor(id) ?? `#${id}`} muted={d !== "accepted"} struck={d !== "accepted"} />
               </span>
             );
           })}

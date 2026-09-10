@@ -18,6 +18,8 @@ export interface TokenCellProps {
   offTop?: boolean;
   /** Known-forbidden by the decision's tokenizer/grammar domain. */
   forbidden?: boolean;
+  /** Crossed out (e.g. a rejected/discarded draft proposal). */
+  struck?: boolean;
   title?: string;
   onClick?: () => void;
 }
@@ -32,6 +34,7 @@ export const TokenCell = memo(function TokenCell({
   closeCall,
   offTop,
   forbidden,
+  struck,
   title,
   onClick,
 }: TokenCellProps) {
@@ -48,6 +51,7 @@ export const TokenCell = memo(function TokenCell({
       data-close={closeCall || undefined}
       data-offtop={offTop || undefined}
       data-forbidden={forbidden || undefined}
+      data-struck={struck || undefined}
       title={title}
       onClick={onClick}
       tabIndex={onClick ? 0 : -1}

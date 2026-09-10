@@ -177,6 +177,10 @@ pub struct RunStartedDto {
     /// Serialized ExecutionControlCapabilities (controlled runs only).
     pub capabilities: Option<String>,
     pub snapshot_support: Option<String>,
+    /// Set when the run is observed-only (no step/pause/force/snapshots):
+    /// the backend's reason controlled execution is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_support: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

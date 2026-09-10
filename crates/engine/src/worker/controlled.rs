@@ -9,9 +9,10 @@ use std::sync::mpsc::Receiver;
 
 use eredu::api::{
     ControlledGenerationBranch, ControlledGenerationRecord, ControlledGenerationSession,
-    ControlledGenerationSnapshot, GenerationBranchOptions, PreparedChatGenerationSettings,
-    SamplingOverride, TraceLimits,
+    ControlledGenerationSnapshot, GenerationBranchOptions, ObservedGenerationRecord,
+    PreparedChatGenerationSettings, SamplingOverride, TraceLimits,
 };
+use eredu_core::GenerationCancellationToken;
 use eredu_core::execution_control::GenerationControlHandle;
 use eredu::runtime::chat::{ChatTemplateRequest, SemanticSupport, ToolChoice};
 use eredu_core::capture::{CaptureLimits, CapturePlan};
@@ -123,6 +124,10 @@ struct PreparedSpec {
     snapshot_limits: eredu_core::execution_control::SnapshotLimits,
     snapshot_cadence: u64,
     clamp_notes: Vec<ClampNote>,
+    /// The dummy forbidden-tool surface was injected for snapshot coverage;
+    /// some native tool grammars reject a declared collection with zero
+    /// permitted calls, so prepare_chat gets one tool-less retry.
+    injected_dummy_tools: bool,
 }
 
 fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
@@ -147,12 +152,14 @@ fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
     // storage estimate, which rejects enable_snapshots. Declaring a dummy
     // tool surface and forbidding calls (exactly eredu's own controlled
     // example) makes counterfactual branching work by default.
+    let mut injected_dummy_tools = false;
     if tools.is_empty() && !text_mode {
         tools = vec![serde_json::json!({"type": "function", "function": {
             "name": "lookup",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
         }})];
         tool_choice = ToolChoice::None;
+        injected_dummy_tools = true;
     }
     let chat_request = ChatTemplateRequest {
         messages,
@@ -214,6 +221,7 @@ fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
         snapshot_limits: resolved.snapshots,
         snapshot_cadence: resolved.snapshot_cadence,
         clamp_notes,
+        injected_dummy_tools,
     })
 }
 
@@ -258,9 +266,33 @@ pub fn run_controlled(
         }
     };
 
-    // Prepare the chat (template render + capability probing).
-    let chat = match loaded.model.prepare_chat(prepared_spec.chat_request.clone()) {
+    // Prepare the chat (template render + capability probing). If the model's
+    // native tool grammar rejects the injected dummy surface (e.g. Muse's ATEM
+    // collection requires at least one call), retry genuinely tool-less —
+    // snapshots may then be unavailable, but generation works.
+    let first_attempt = loaded.model.prepare_chat(prepared_spec.chat_request.clone());
+    let chat = match first_attempt {
         Ok(chat) => chat,
+        Err(e) if prepared_spec.injected_dummy_tools => {
+            let toolless = ChatTemplateRequest {
+                tools: vec![],
+                tool_choice: ToolChoice::Auto,
+                ..prepared_spec.chat_request.clone()
+            };
+            match loaded.model.prepare_chat(toolless) {
+                Ok(chat) => chat,
+                Err(_) => {
+                    // Report the original rejection; the retry did not help.
+                    let _ = reply.send(Err(IpcError::Control {
+                        op: "prepare_chat".into(),
+                        class: ControlErrorClass::Generation,
+                        message: e.to_string(),
+                        chain: error_chain(&e),
+                    }));
+                    return None;
+                }
+            }
+        }
         Err(e) => {
             let _ = reply.send(Err(IpcError::Control {
                 op: "prepare_chat".into(),
@@ -327,6 +359,39 @@ pub fn run_controlled(
         Ok(s) => s,
         Err(e) => {
             *context.shared.handle.lock().expect("control poisoned") = None;
+            // Architectures without complete native state copying cannot run
+            // controlled sessions at all (eredu gates start on execution
+            // control support). Fall back to ordinary observed generation:
+            // same records and captures, no step/pause/force/snapshots.
+            if let eredu::api::ControlledGenerationError::Capture(
+                eredu_core::capture::CaptureError::Unsupported(reason),
+            ) = &e
+            {
+                let reason = reason.clone();
+                return run_observed_fallback(
+                    loaded,
+                    &spec,
+                    &prepared_spec,
+                    |model| match &prepared_spec.intervention {
+                        Some(plan) => model.prepare_intervened_chat(
+                            &chat,
+                            prepared_spec.settings.clone(),
+                            prepared_spec.capture.clone(),
+                            plan.clone(),
+                            prepared_spec.trace,
+                        ),
+                        None => model.prepare_observed_chat(
+                            &chat,
+                            prepared_spec.settings.clone(),
+                            prepared_spec.capture.clone(),
+                            prepared_spec.trace,
+                        ),
+                    },
+                    reason,
+                    reply,
+                    context,
+                );
+            }
             let _ = reply.send(Err(control_error("start", &e)));
             return None;
         }
@@ -374,6 +439,7 @@ pub fn run_controlled(
         clamp_notes: prepared_spec.clamp_notes.clone(),
         capabilities: Some(serialize_string(&session.capabilities())),
         snapshot_support: snapshot_support_note,
+        control_support: None,
     }));
 
     // Initial snapshot at the prepared boundary makes position 0 branchable.
@@ -446,6 +512,138 @@ pub fn run_controlled(
     drop(session);
     *context.shared.handle.lock().expect("control poisoned") = None;
     pending
+}
+
+/// Observed-only run: the model generates to completion (or cancellation via
+/// the shared token) while records stream through the same envelope path as
+/// controlled runs — each ObservedGenerationRecord wrapped with a synthesized
+/// monotone sequence and epoch 0, so the journal and frontend are unchanged.
+/// The start reply is sent on the first record (that is when eredu assigns
+/// the run id), carrying the control-unavailability reason.
+fn run_observed_fallback(
+    loaded: &mut LoadedWorkerModel,
+    spec: &StartRunSpecDto,
+    prepared_spec: &PreparedSpec,
+    prepare: impl FnOnce(
+        &mut eredu::api::LoadedModel<Backend>,
+    ) -> Result<eredu::api::PreparedObservedGeneration, eredu::api::PreparedChatError>,
+    control_note: String,
+    reply: Reply<RunStartedDto>,
+    context: &WorkerContext,
+) -> Option<Command> {
+    // The first prepared request was consumed by the failed controlled start.
+    let prepared = match prepare(&mut loaded.model) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = reply.send(Err(IpcError::Control {
+                op: "prepare_observed".into(),
+                class: ControlErrorClass::Capture,
+                message: e.to_string(),
+                chain: error_chain(&e),
+            }));
+            return None;
+        }
+    };
+
+    let cancellation = GenerationCancellationToken::new();
+    *context
+        .shared
+        .spec_cancellation
+        .lock()
+        .expect("control poisoned") = Some(cancellation.clone());
+
+    let emitter = &context.emitter;
+    let journal = emitter.journal.clone();
+    let model_epoch = emitter.model_epoch;
+    let artifact_path = emitter.artifact_path.display().to_string();
+    let model_label = emitter.model_label.clone();
+    let spec_json = serialize_string(spec);
+    let created_ms = spec.created_ms.unwrap_or(0);
+    let clamp_notes = prepared_spec.clamp_notes.clone();
+
+    let mut reply_slot = Some(reply);
+    let mut run_id_slot: Option<String> = None;
+    let mut sequence: u64 = 0;
+    let emit = |record: ObservedGenerationRecord| -> std::ops::ControlFlow<()> {
+        let run_id = record.run_id.clone();
+        if run_id_slot.is_none() {
+            run_id_slot = Some(run_id.clone());
+            journal.register_run(RunMeta {
+                run_id: run_id.clone(),
+                model_epoch,
+                artifact_path: artifact_path.clone(),
+                model_label: model_label.clone(),
+                speculative: false,
+                spec_json: spec_json.clone(),
+                lineage: None,
+                status: RunStatus::Active,
+                resumable: false,
+                pinned: false,
+                created_ms,
+            });
+            if let Some(r) = reply_slot.take() {
+                let _ = r.send(Ok(RunStartedDto {
+                    run_id: run_id.clone(),
+                    speculative: false,
+                    clamp_notes: clamp_notes.clone(),
+                    capabilities: None,
+                    snapshot_support: Some(control_note.clone()),
+                    control_support: Some(control_note.clone()),
+                }));
+            }
+        }
+        let wrapped = ControlledGenerationRecord {
+            schema_version: record.schema_version,
+            sequence,
+            epoch: 0,
+            timing: Default::default(),
+            generation: record,
+        };
+        sequence += 1;
+        if emitter.emit_serialize(StreamKind::Controlled, &run_id, &wrapped) {
+            std::ops::ControlFlow::Continue(())
+        } else {
+            std::ops::ControlFlow::Break(())
+        }
+    };
+
+    let result =
+        loaded
+            .model
+            .generate_observed_chat(prepared, &prepared_spec.stops, cancellation.clone(), emit);
+    *context
+        .shared
+        .spec_cancellation
+        .lock()
+        .expect("control poisoned") = None;
+
+    let (journal_status, status_word) = match &result {
+        Ok(_) if cancellation.is_cancelled() => (RunStatus::Cancelled, "cancelled"),
+        Ok(_) => (RunStatus::Completed, "completed"),
+        Err(_) => (RunStatus::Failed, "failed"),
+    };
+    if let Some(run_id) = &run_id_slot {
+        journal.set_status(run_id, journal_status, false);
+    }
+    emitter.emit_system(&serde_json::json!({
+        "kind": "observed_finished",
+        "status": status_word,
+        "message": result.as_ref().err().map(|e| e.to_string()),
+    }));
+    if let Some(r) = reply_slot {
+        // Failed before any record was produced.
+        let message = result
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "observed generation produced no records".into());
+        let _ = r.send(Err(IpcError::Control {
+            op: "observed".into(),
+            class: ControlErrorClass::Generation,
+            message: message.clone(),
+            chain: vec![message],
+        }));
+    }
+    None
 }
 
 /// Returns true when the session should end.

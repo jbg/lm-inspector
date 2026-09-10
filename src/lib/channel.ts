@@ -80,7 +80,12 @@ function maybeAck(): void {
 
 function handleSystem(env: RunEventEnvelope): void {
   try {
-    const payload = JSON.parse(env.payload) as { kind?: string; stage?: string; message?: string };
+    const payload = JSON.parse(env.payload) as {
+      kind?: string;
+      stage?: string;
+      status?: string;
+      message?: string;
+    };
     const session = useSession.getState();
     switch (payload.kind) {
       case "load_stage":
@@ -88,6 +93,9 @@ function handleSystem(env: RunEventEnvelope): void {
         break;
       case "speculative_finished":
         session.setSpecFinished();
+        break;
+      case "observed_finished":
+        session.setObservedFinished(payload.status ?? "completed", payload.message ?? undefined);
         break;
       case "speculative_failed":
       case "model_reset_failed":

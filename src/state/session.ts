@@ -42,6 +42,8 @@ interface SessionState {
   activeRunId?: string;
   speculative: boolean;
   runStarted?: RunStarted;
+  /** Reason the active run has no controls (observed-only fallback). */
+  observedOnly?: string;
   transport: { status: string; busy: boolean; finishReason?: string };
   tree?: TreeStatus;
   pendingForcedToken?: number;
@@ -49,6 +51,7 @@ interface SessionState {
   specFinished: boolean;
 
   setLoadStage: (stage: string) => void;
+  setObservedFinished: (status: string, message?: string) => void;
   pushNotice: (message: string) => void;
   setSpecFinished: () => void;
   dismissNotice: (index: number) => void;
@@ -124,6 +127,10 @@ export const useSession = create<SessionState>((set, get) => {
       ),
     pushNotice: (message) => set((s) => ({ notices: [...s.notices.slice(-4), message] })),
     setSpecFinished: () => set({ specFinished: true, transport: { status: "completed", busy: false } }),
+    setObservedFinished: (status, message) => {
+      if (message) get().pushNotice(`run ${status}: ${message}`);
+      set({ transport: { status, busy: false } });
+    },
     dismissNotice: (index) =>
       set((s) => ({ notices: s.notices.filter((_, i) => i !== index) })),
 
@@ -191,12 +198,16 @@ export const useSession = create<SessionState>((set, get) => {
           activeRunId: started.runId,
           speculative,
           runStarted: started,
-          transport: { status: "prepared", busy: false },
+          observedOnly: started.controlSupport,
+          // Observed-only runs are already generating when the reply lands.
+          transport: started.controlSupport
+            ? { status: "running", busy: true }
+            : { status: "prepared", busy: false },
         });
         for (const note of started.clampNotes) {
           get().pushNotice(`clamped ${note.field}: ${note.requested} → ${note.clampedTo}`);
         }
-        void get().refreshTree();
+        if (!started.controlSupport) void get().refreshTree();
       }
       return started;
     },

@@ -41,7 +41,18 @@ export function Transport() {
         flex: "none",
       }}
     >
-      {viewingParked ? (
+      {session.observedOnly && !viewingParked ? (
+        <>
+          <Tooltip label={session.observedOnly}>
+            <span className="sp-eyebrow" style={{ color: "var(--text-muted)" }}>
+              Free-running — controls unavailable for this model
+            </span>
+          </Tooltip>
+          <Button size="sm" variant="ghost" disabled={terminal} onClick={() => setConfirmCancel(true)}>
+            ✕ Cancel
+          </Button>
+        </>
+      ) : viewingParked ? (
         <>
           <span className="sp-eyebrow" style={{ color: "var(--text-muted)" }}>
             Parked run — view only
@@ -106,7 +117,7 @@ export function Transport() {
 
       <div style={{ flex: 1 }} />
 
-      {!session.speculative && (
+      {!session.speculative && !session.observedOnly && (
         <Tooltip label="pin a snapshot at this boundary">
           <Button size="sm" variant="ghost" disabled={session.transport.busy} onClick={() => void session.pinSnapshot()}>
             ◆ PIN {session.tree ? `${session.tree.snapshots.length}` : ""}

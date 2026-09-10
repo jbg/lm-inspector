@@ -269,23 +269,23 @@ function CapturePanel({ speculative, hasMoe }: { speculative: boolean; hasMoe: b
             max={64}
             value={c.topK.count}
             onChange={(e) => plans.setCapture({ topK: { ...c.topK, count: Number(e.target.value) } })}
-            style={{ width: 90, accentColor: "#ff00ff" }}
+            style={{ width: 90, accentColor: "var(--accent)" }}
           />
         </div>
         {!c.topK.enabled && (
           <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--accent)", margin: 0 }}>
-            without alternates, token probabilities and FORCE are unavailable
+            without alternates, token probabilities and Force are unavailable
           </p>
         )}
         <Switch
-          label="LAYER TRAJECTORY (summary per layer output)"
+          label="Layer trajectory (summary per layer output)"
           checked={c.layerTrajectory.enabled}
           disabled={speculative}
           onChange={(v) => plans.setCapture({ layerTrajectory: { ...c.layerTrajectory, enabled: v } })}
         />
         {hasMoe && (
           <Switch
-            label="MOE ROUTING (selected experts per token)"
+            label="MoE routing (selected experts per token)"
             checked={c.moeRouting.enabled}
             disabled={speculative}
             onChange={(v) => plans.setCapture({ moeRouting: { enabled: v } })}

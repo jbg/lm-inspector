@@ -330,6 +330,7 @@ pub fn run_speculative(
                 clamp_notes: clamp_notes.clone(),
                 capabilities: None,
                 snapshot_support: serde_json::to_string(&session.snapshot_support()).ok(),
+                control_support: None,
             }));
         }
 

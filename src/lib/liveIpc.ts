@@ -61,6 +61,9 @@ export interface RunStarted {
   clampNotes: { field: string; requested: string; clampedTo: string }[];
   capabilities?: string;
   snapshotSupport?: string;
+  /** Set on observed-only runs: why controls (step/pause/force/snapshots)
+   * are unavailable for this model. */
+  controlSupport?: string;
 }
 
 export interface RunStatusResult {

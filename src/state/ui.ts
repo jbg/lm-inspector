@@ -9,19 +9,24 @@ interface UiState {
   viewedRunId?: string;
   /** Follow the streaming head while nothing is selected. */
   follow: boolean;
+  /** Show the composer even while runs exist (the way back to a new prompt). */
+  composing: boolean;
   dockTab: DockTab;
   select: (runId: string, predictionIndex: number) => void;
   clearSelection: () => void;
   viewRun: (runId: string) => void;
+  openComposer: () => void;
   setDockTab: (tab: DockTab) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
   follow: true,
+  composing: false,
   dockTab: "alternates",
   select: (runId, predictionIndex) =>
-    set({ selection: { runId, predictionIndex }, viewedRunId: runId, follow: false, dockTab: "alternates" }),
+    set({ selection: { runId, predictionIndex }, viewedRunId: runId, follow: false, dockTab: "alternates", composing: false }),
   clearSelection: () => set({ selection: undefined, follow: true }),
-  viewRun: (viewedRunId) => set({ viewedRunId }),
+  viewRun: (viewedRunId) => set({ viewedRunId, composing: false }),
+  openComposer: () => set({ composing: true, selection: undefined, follow: true }),
   setDockTab: (dockTab) => set({ dockTab }),
 }));

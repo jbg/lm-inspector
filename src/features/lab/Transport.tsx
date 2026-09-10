@@ -129,7 +129,19 @@ export function Transport() {
       <Button size="sm" variant="ghost" onClick={() => setTuneOpen((v) => !v)}>
         Sampling ▾
       </Button>
-      <Button size="sm" variant="ghost" onClick={() => void session.endSession()}>
+      <Tooltip label="compose another prompt — this run stays in Runs">
+        <Button size="sm" variant="ghost" onClick={() => useUi.getState().openComposer()}>
+          ✎ New prompt
+        </Button>
+      </Tooltip>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          void session.endSession();
+          useUi.getState().openComposer();
+        }}
+      >
         End session
       </Button>
 

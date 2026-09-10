@@ -49,6 +49,7 @@ export function Composer() {
     }
   };
 
+  const lastRunId = useUi((s) => s.viewedRunId) ?? session.activeRunId;
   const toolsError = plans.textMode ? undefined : parseTools(plans.toolsJson).error;
   const canStart =
     (plans.textMode
@@ -62,6 +63,11 @@ export function Composer() {
           <Eyebrow>Prompt</Eyebrow>
           {speculative && <Tag size="sm">Speculative · {info?.drafting}</Tag>}
           <div style={{ flex: 1 }} />
+          {lastRunId && (
+            <Button size="sm" variant="ghost" onClick={() => useUi.getState().viewRun(lastRunId)}>
+              ◂ Back to run
+            </Button>
+          )}
           <Switch label="Raw text" checked={plans.textMode} onChange={plans.setTextMode} />
         </div>
 

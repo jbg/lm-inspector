@@ -15,6 +15,7 @@ import { LineagePanel } from "./LineagePanel";
 
 export function LabScreen() {
   const session = useSession();
+  const composing = useUi((s) => s.composing);
   const viewedRunId = useUi((s) => s.viewedRunId) ?? session.activeRunId;
   const journal = useJournal(viewedRunId);
   const go = useNav((s) => s.go);
@@ -46,7 +47,7 @@ export function LabScreen() {
     );
   }
 
-  const hasRun = viewedRunId !== undefined && journal !== undefined;
+  const hasRun = !composing && viewedRunId !== undefined && journal !== undefined;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", maxWidth: 1440, margin: "0 auto" }}>

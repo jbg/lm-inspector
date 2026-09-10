@@ -56,7 +56,12 @@ export function AlternatesPanel({ journal }: { journal: RunJournal }) {
       {!topk ? (
         <MissingCapture derived={derived} predictionIndex={predictionIndex} />
       ) : (
-        <CandidateRows journal={journal} predictionIndex={predictionIndex} chosenId={token?.tokenId} />
+        <CandidateRows
+          journal={journal}
+          predictionIndex={predictionIndex}
+          chosenId={token?.tokenId}
+          chosenText={token?.text || undefined}
+        />
       )}
 
       <VocabSearch journal={journal} predictionIndex={predictionIndex} />
@@ -80,10 +85,15 @@ function CandidateRows({
   journal,
   predictionIndex,
   chosenId,
+  chosenText,
 }: {
   journal: RunJournal;
   predictionIndex: number;
   chosenId?: number;
+  /** The committed token's contextual text (from the semantic stream). A
+   * single-id decode ignores byte-merge context, so it can differ from what
+   * the tape shows; prefer this for the chosen row so the two agree. */
+  chosenText?: string;
 }) {
   const derived = journal.derived;
   const topk = topkForPrediction(derived, predictionIndex)!;
@@ -127,7 +137,10 @@ function CandidateRows({
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {rows.map((entry, i) => {
           const chosen = entry.tokenId === chosenId;
-          const piece = pieceFor(entry.tokenId) ?? `#${entry.tokenId}`;
+          const isolated = pieceFor(entry.tokenId) ?? `#${entry.tokenId}`;
+          // The chosen token has authoritative contextual text; other
+          // candidates only have the context-free single-id decode.
+          const piece = chosen && chosenText ? chosenText : isolated;
           const detail =
             `"${piece}" · id ${entry.tokenId} · raw logit ${entry.score.toFixed(2)} · ${formatPercent(entry.probability)} of top-k mass` +
             (entry.forbidden ? " · forbidden by the tokenizer/grammar domain — never sampleable here" : "");

@@ -21,7 +21,11 @@ export function Composer() {
   const session = useSession();
   const plans = usePlans();
   const info = session.load.phase === "loaded" ? session.load.info : undefined;
-  const speculative = (info?.drafting ?? "disabled") !== "disabled";
+  // Drafting resources are realized at load but sit in their own execution
+  // part — ordinary sessions on the same weights never touch them, so the
+  // run kind is a per-run choice whenever the load carried a drafter.
+  const draftingAvailable = (info?.drafting ?? "disabled") !== "disabled";
+  const speculative = draftingAvailable && plans.useDrafting;
   const controlUnsupported = info?.controlSupport;
 
   // A model without controlled execution can only run observed.
@@ -63,6 +67,9 @@ export function Composer() {
           <Eyebrow>Prompt</Eyebrow>
           {speculative && <Tag size="sm">Speculative · {info?.drafting}</Tag>}
           <div style={{ flex: 1 }} />
+          {draftingAvailable && (
+            <Switch label="Drafting" checked={plans.useDrafting} onChange={plans.setUseDrafting} />
+          )}
           {lastRunId && (
             <Button size="sm" variant="ghost" onClick={() => useUi.getState().viewRun(lastRunId)}>
               ◂ Back to run

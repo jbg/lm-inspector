@@ -59,6 +59,9 @@ interface PlansState {
   textMode: boolean;
   /** Session mode: controlled (step/force/branch) or observed (free-run). */
   execution: "controlled" | "observed";
+  /** Use the load's realized drafting for this run (speculative session).
+   * Ignored when the model was loaded without a drafter. */
+  useDrafting: boolean;
   /** Tool declarations as JSON source text (edited raw, parsed at start). */
   toolsJson: string;
   toolChoice: "auto" | "none" | "required";
@@ -75,6 +78,7 @@ interface PlansState {
   setRawText: (text: string) => void;
   setTextMode: (on: boolean) => void;
   setExecution: (execution: "controlled" | "observed") => void;
+  setUseDrafting: (useDrafting: boolean) => void;
   setToolsJson: (json: string) => void;
   setToolChoice: (choice: "auto" | "none" | "required") => void;
   setThinking: (on: boolean | undefined) => void;
@@ -92,6 +96,7 @@ export const usePlans = create<PlansState>((set) => ({
   rawText: "",
   textMode: false,
   execution: "controlled" as const,
+  useDrafting: true,
   toolsJson: "",
   toolChoice: "auto",
   enableThinking: undefined,
@@ -120,6 +125,7 @@ export const usePlans = create<PlansState>((set) => ({
   setRawText: (rawText) => set({ rawText }),
   setTextMode: (textMode) => set({ textMode }),
   setExecution: (execution) => set({ execution }),
+  setUseDrafting: (useDrafting) => set({ useDrafting }),
   setToolsJson: (toolsJson) => set({ toolsJson }),
   setToolChoice: (toolChoice) => set({ toolChoice }),
   setThinking: (enableThinking) => set({ enableThinking }),

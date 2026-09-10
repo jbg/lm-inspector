@@ -1,9 +1,16 @@
 // Reproduces the external-drafting load path: target + assistant plan build.
+#[cfg(not(feature = "mlx"))]
+fn main() {
+    eprintln!("build with --features mlx or metal");
+}
+
+#[cfg(feature = "mlx")]
+mod probe {
 use eredu::api::{local_device_plan, LoadedModel, LocalDevice};
 use eredu_backend_mlx::MlxBackendFactory;
 use eredu_core::{DraftPlacementPlan, DraftingPlan, ExecutionPlan, SessionCapabilities};
 
-fn main() {
+pub fn main() {
     let target = std::env::args().nth(1).expect("target path");
     let drafter = std::env::args().nth(2).expect("drafter path");
     let device_plan = local_device_plan(LocalDevice::Accelerator(0)).expect("device");
@@ -32,3 +39,7 @@ fn main() {
         }
     }
 }
+
+}
+#[cfg(feature = "mlx")]
+fn main() { probe::main() }

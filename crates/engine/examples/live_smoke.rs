@@ -66,6 +66,7 @@ fn main() {
     );
 
     let spec = StartRunSpecDto {
+        execution: None,
         messages: vec![serde_json::json!({"role": "user", "content": "Name three colors."})],
         tools: vec![],
         tool_choice: None,

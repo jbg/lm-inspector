@@ -1,5 +1,12 @@
 // Reproduces the backdoor-gemma2 failures: controlled probe, dummy-tool
 // prepare, tool-less prepare, and an observed run attempt.
+#[cfg(not(feature = "mlx"))]
+fn main() {
+    eprintln!("build with --features mlx or metal");
+}
+
+#[cfg(feature = "mlx")]
+mod probe {
 use std::ops::ControlFlow;
 use eredu::api::{local_device_plan, LoadedModel, LocalDevice, PreparedChatGenerationSettings};
 use eredu::runtime::chat::{ChatTemplateRequest, SemanticSupport, ToolChoice};
@@ -14,7 +21,7 @@ fn settings() -> PreparedChatGenerationSettings {
     }
 }
 
-fn main() {
+pub fn main() {
     let path = std::env::args().nth(1).expect("path");
     let device_plan = local_device_plan(LocalDevice::Accelerator(0)).expect("device");
     let execution = ExecutionPlan::fully_resident(device_plan)
@@ -88,3 +95,7 @@ fn main() {
         Err(e) => println!("4. generate_observed_chat: ERR {e}"),
     }
 }
+
+}
+#[cfg(feature = "mlx")]
+fn main() { probe::main() }

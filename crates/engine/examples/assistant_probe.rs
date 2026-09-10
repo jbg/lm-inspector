@@ -1,4 +1,12 @@
+
+#[cfg(not(feature = "mlx"))]
 fn main() {
+    eprintln!("build with --features mlx or metal");
+}
+
+#[cfg(feature = "mlx")]
+mod probe {
+pub fn main() {
     let path = std::env::args().nth(1).expect("path");
     match eredu_architectures::prepare_external_assistant(&path) {
         Ok(_) => println!("prepare_external_assistant OK for {path}"),
@@ -12,3 +20,7 @@ fn main() {
         }
     }
 }
+
+}
+#[cfg(feature = "mlx")]
+fn main() { probe::main() }

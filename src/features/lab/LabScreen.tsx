@@ -48,9 +48,21 @@ export function LabScreen() {
   }
 
   const hasRun = !composing && viewedRunId !== undefined && journal !== undefined;
+  const loaded = session.load.phase === "loaded" ? session.load.info : undefined;
+  const repoId = target?.repoId ?? loaded?.modelLabel;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", maxWidth: 1440, margin: "0 auto" }}>
+      {repoId && (
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flex: "none" }}>
+          <span style={{ fontWeight: 500, fontSize: "var(--font-text-md-size)" }}>{repoId}</span>
+          {loaded?.effectiveModelType && (
+            <span style={{ fontFamily: "var(--font-code)", fontSize: "var(--font-text-xs-size)", color: "var(--color-text-tertiary)" }}>
+              {loaded.effectiveModelType}
+            </span>
+          )}
+        </div>
+      )}
       {hasRun && <LineagePanel />}
       {hasRun ? (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 400px", gap: 16, flex: 1, minHeight: 0 }}>

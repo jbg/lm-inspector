@@ -53,7 +53,7 @@ export function ModelScreen({ path, repoId, tab }: { path: string; repoId: strin
         <Button
           size="sm"
           onClick={() => {
-            usePlans.getState().setTargetArtifact({ path, label: repoDisplayName(repoId) });
+            usePlans.getState().setTargetArtifact({ path, label: repoDisplayName(repoId), repoId });
             go({ name: "lab" });
           }}
         >

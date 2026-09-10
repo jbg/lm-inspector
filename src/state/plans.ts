@@ -54,7 +54,7 @@ export interface InterventionDraft {
 
 interface PlansState {
   /** Artifact chosen in the Library for loading in the Lab. */
-  targetArtifact?: { path: string; label: string };
+  targetArtifact?: { path: string; label: string; repoId?: string };
   messages: MessageDraft[];
   rawText: string;
   textMode: boolean;
@@ -89,7 +89,7 @@ interface PlansState {
   setInterventions: (list: InterventionDraft[]) => void;
   setDevice: (device: "cpu" | "accelerator") => void;
   setDrafting: (drafting: Drafting) => void;
-  setTargetArtifact: (target?: { path: string; label: string }) => void;
+  setTargetArtifact: (target?: { path: string; label: string; repoId?: string }) => void;
 }
 
 export const usePlans = create<PlansState>((set) => ({

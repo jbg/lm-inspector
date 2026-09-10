@@ -107,6 +107,9 @@ pub struct LoadedModelInfoDto {
     pub model_epoch: u64,
     pub artifact_path: String,
     pub model_label: String,
+    /// Full HF repo id (e.g. "org/name") parsed from the cache path, when the
+    /// artifact lives under a "models--org--name" cache directory.
+    pub repo_id: Option<String>,
     pub effective_model_type: String,
     pub eos_token_ids: Vec<u32>,
     pub has_chat_template: bool,

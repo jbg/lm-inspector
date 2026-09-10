@@ -58,6 +58,17 @@ fn drafting_plan(dto: &Option<DraftingDto>) -> DraftingPlan {
     }
 }
 
+/// Reconstructs an HF repo id from a cache path: the `models--{owner}--{name}`
+/// directory maps back to `{owner}/{name}` (HF replaces `/` with `--`, and
+/// single dashes in names are preserved). Returns None for paths outside a
+/// recognizable HF cache layout (e.g. an ad-hoc directory or loose GGUF).
+fn repo_id_from_path(path: &Path) -> Option<String> {
+    path.components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .find_map(|seg| seg.strip_prefix("models--"))
+        .map(|rest| rest.split("--").collect::<Vec<_>>().join("/"))
+}
+
 pub fn load_model(
     artifact_path: &Path,
     plan: &LoadPlanDto,
@@ -229,6 +240,7 @@ pub fn load_model(
         model_epoch,
         artifact_path: artifact_path.display().to_string(),
         model_label: context.emitter.model_label.clone(),
+        repo_id: repo_id_from_path(artifact_path),
         effective_model_type: model.effective_model_type().to_string(),
         eos_token_ids: model.eos_token_ids().to_vec(),
         has_chat_template: model.has_chat_template(),
@@ -254,4 +266,23 @@ pub fn load_model(
         info,
         vocabulary,
     })
+}
+
+#[cfg(test)]
+mod repo_id_tests {
+    use super::repo_id_from_path;
+    use std::path::Path;
+
+    #[test]
+    fn repo_id_from_path_parses() {
+        assert_eq!(
+            repo_id_from_path(Path::new("/x/hub/models--meta-models--Muse-Glimmer-30B/snapshots/abc")),
+            Some("meta-models/Muse-Glimmer-30B".to_string())
+        );
+        assert_eq!(
+            repo_id_from_path(Path::new("/x/hub/models--Qwen--Qwen3.6-35B-A3B-FP8/snapshots/h/model.gguf")),
+            Some("Qwen/Qwen3.6-35B-A3B-FP8".to_string())
+        );
+        assert_eq!(repo_id_from_path(Path::new("/some/loose/dir")), None);
+    }
 }

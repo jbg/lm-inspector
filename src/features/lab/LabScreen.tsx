@@ -49,7 +49,7 @@ export function LabScreen() {
 
   const hasRun = !composing && viewedRunId !== undefined && journal !== undefined;
   const loaded = session.load.phase === "loaded" ? session.load.info : undefined;
-  const repoId = target?.repoId ?? loaded?.modelLabel;
+  const repoId = loaded?.repoId ?? target?.repoId ?? loaded?.modelLabel;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", maxWidth: 1440, margin: "0 auto" }}>

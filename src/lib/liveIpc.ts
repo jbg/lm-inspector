@@ -24,6 +24,8 @@ export interface LoadedModelInfo {
   modelEpoch: I64;
   artifactPath: string;
   modelLabel: string;
+  /** Full HF repo id parsed from the cache path, when available. */
+  repoId?: string;
   effectiveModelType: string;
   eosTokenIds: number[];
   hasChatTemplate: boolean;

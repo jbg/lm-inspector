@@ -175,7 +175,10 @@ export function buildCapturePlan(
     selections.push({
       id: "inspector-topk",
       path: "model.logits",
-      schedule: schedule(1),
+      // prefill: prediction 0 is decided by the prompt's prefill pass, and
+      // TopCandidates reads only the last logits row — without this the
+      // first token has no alternates.
+      schedule: schedule(1, true),
       slices: [],
       transform: { kind: "top_candidates", count: capture.topK.count },
     });

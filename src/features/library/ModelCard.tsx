@@ -5,7 +5,7 @@ import type { CachedModel } from "../../lib/types";
 import { useNav } from "../../state/nav";
 
 /** One library row. Clicking anywhere opens inspection. */
-export function ModelRow({ model, last }: { model: CachedModel; last?: boolean }) {
+export function ModelRow({ model, last, defaultCacheDir }: { model: CachedModel; last?: boolean; defaultCacheDir?: string }) {
   const go = useNav((s) => s.go);
   const [hover, setHover] = useState(false);
 
@@ -63,6 +63,13 @@ export function ModelRow({ model, last }: { model: CachedModel; last?: boolean }
             {f}
           </Tag>
         ))}
+        {defaultCacheDir !== undefined && model.cacheDir !== defaultCacheDir && (
+          <span title={model.cacheDir}>
+            <Tag size="sm" color="blue">
+              external
+            </Tag>
+          </span>
+        )}
         {model.revisions.length > 1 && <Tag size="sm">{model.revisions.length} revisions</Tag>}
       </div>
       <span

@@ -1,5 +1,5 @@
 fn main() {
-    let snap = inspector_engine::cache::scan_model_cache().expect("scan");
+    let snap = inspector_engine::cache::scan_model_cache(&[]).expect("scan");
     for m in &snap.models {
         for r in &m.revisions {
             for a in &r.artifacts {

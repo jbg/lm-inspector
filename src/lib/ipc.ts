@@ -16,8 +16,8 @@ export function inTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-export async function scanModelCache(): Promise<CacheSnapshot> {
-  return invoke<CacheSnapshot>("scan_model_cache");
+export async function scanModelCache(extraDirs: string[]): Promise<CacheSnapshot> {
+  return invoke<CacheSnapshot>("scan_model_cache", { extraDirs });
 }
 
 export async function inspectModel(path: string, probeChat: boolean): Promise<InspectionBundle> {

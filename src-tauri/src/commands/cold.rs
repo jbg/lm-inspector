@@ -26,8 +26,8 @@ pub struct TokenPieceDto {
 }
 
 #[tauri::command]
-pub async fn scan_model_cache() -> Result<CacheSnapshotDto, IpcError> {
-    run_blocking(inspector_engine::cache::scan_model_cache).await
+pub async fn scan_model_cache(extra_dirs: Vec<String>) -> Result<CacheSnapshotDto, IpcError> {
+    run_blocking(move || inspector_engine::cache::scan_model_cache(&extra_dirs)).await
 }
 
 /// Returns the full inspection bundle as a JSON string (parsed losslessly on

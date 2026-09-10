@@ -29,7 +29,7 @@ fn main() {
 
     let artifact = std::env::args().nth(1).unwrap_or_else(|| {
         // Default: smallest GGUF/SafeTensors artifact in the cache.
-        let snapshot = inspector_engine::cache::scan_model_cache().expect("scan");
+        let snapshot = inspector_engine::cache::scan_model_cache(&[]).expect("scan");
         let mut candidates: Vec<_> = snapshot
             .models
             .iter()

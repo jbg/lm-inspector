@@ -35,6 +35,8 @@ pub struct CacheWarningDto {
 #[serde(rename_all = "camelCase")]
 pub struct CachedModelDto {
     pub repo_id: String,
+    /// The cache root this repo was found in (multiple caches may be scanned).
+    pub cache_dir: String,
     #[serde(with = "crate::lossless::u64_string")]
     pub size_on_disk: u64,
     /// Millis since epoch.
@@ -87,35 +89,75 @@ pub enum ArtifactFormatDto {
     Gguf,
 }
 
-pub fn scan_model_cache() -> Result<CacheSnapshotDto, IpcError> {
+/// Scans the default HF cache plus any extra cache roots (e.g. a second cache
+/// on an external drive). A missing/unreadable extra root becomes a warning,
+/// never a scan failure — external drives may simply be unplugged.
+pub fn scan_model_cache(extra_dirs: &[String]) -> Result<CacheSnapshotDto, IpcError> {
     let cache_dir = hf_cache_reader::resolve_cache_dir();
     let info = scan_cache(&cache_dir)
         .map_err(|e| IpcError::CacheScan { message: e.to_string() })?;
 
-    let mut models: Vec<CachedModelDto> = info
-        .repos
+    let mut models: Vec<CachedModelDto> = Vec::new();
+    let mut warnings: Vec<CacheWarningDto> = info
+        .warnings
         .iter()
-        .filter(|r| r.repo_type == RepoType::Model)
-        .map(model_dto)
+        .map(|w| CacheWarningDto {
+            path: w.path.display().to_string(),
+            message: w.message.clone(),
+        })
         .collect();
+    let mut total = info.size_on_disk;
+    let primary = info.cache_dir.display().to_string();
+    models.extend(
+        info.repos
+            .iter()
+            .filter(|r| r.repo_type == RepoType::Model)
+            .map(|r| model_dto(r, &primary)),
+    );
+
+    for dir in extra_dirs {
+        // hf-cache-reader treats a missing directory as an empty cache; an
+        // unplugged external drive should say so instead of showing nothing.
+        if !Path::new(dir).is_dir() {
+            warnings.push(CacheWarningDto {
+                path: dir.clone(),
+                message: "cache directory not found (drive unplugged?)".into(),
+            });
+            continue;
+        }
+        match scan_cache(Path::new(dir)) {
+            Ok(extra) => {
+                let root = extra.cache_dir.display().to_string();
+                total += extra.size_on_disk;
+                models.extend(
+                    extra
+                        .repos
+                        .iter()
+                        .filter(|r| r.repo_type == RepoType::Model)
+                        .map(|r| model_dto(r, &root)),
+                );
+                warnings.extend(extra.warnings.iter().map(|w| CacheWarningDto {
+                    path: w.path.display().to_string(),
+                    message: w.message.clone(),
+                }));
+            }
+            Err(e) => warnings.push(CacheWarningDto {
+                path: dir.clone(),
+                message: format!("extra cache not scanned: {e}"),
+            }),
+        }
+    }
     models.sort_by(|a, b| b.last_modified_ms.cmp(&a.last_modified_ms));
 
     Ok(CacheSnapshotDto {
-        cache_dir: info.cache_dir.display().to_string(),
-        total_size_on_disk: info.size_on_disk,
+        cache_dir: primary,
+        total_size_on_disk: total,
         models,
-        warnings: info
-            .warnings
-            .iter()
-            .map(|w| CacheWarningDto {
-                path: w.path.display().to_string(),
-                message: w.message.clone(),
-            })
-            .collect(),
+        warnings,
     })
 }
 
-fn model_dto(repo: &CachedRepo) -> CachedModelDto {
+fn model_dto(repo: &CachedRepo, cache_dir: &str) -> CachedModelDto {
     let mut revisions: Vec<RevisionDto> = repo.revisions.iter().map(revision_dto).collect();
     // Preferred-first: ref "main" wins, then newest, then commit hash for stability.
     revisions.sort_by(|a, b| {
@@ -128,6 +170,7 @@ fn model_dto(repo: &CachedRepo) -> CachedModelDto {
     });
     CachedModelDto {
         repo_id: repo.repo_id.clone(),
+        cache_dir: cache_dir.to_string(),
         size_on_disk: repo.size_on_disk,
         last_modified_ms: to_ms(repo.last_modified),
         revisions,

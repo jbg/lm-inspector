@@ -2,7 +2,7 @@
 //! Run: cargo run -p inspector-engine --example cold_smoke
 
 fn main() {
-    let snapshot = inspector_engine::cache::scan_model_cache().expect("scan failed");
+    let snapshot = inspector_engine::cache::scan_model_cache(&[]).expect("scan failed");
     println!(
         "cache: {} · {} models · {} warnings",
         snapshot.cache_dir,

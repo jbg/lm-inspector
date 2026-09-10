@@ -14,6 +14,8 @@ export interface CacheSnapshot {
 }
 
 export interface CachedModel {
+  /** Cache root this repo was found in (multiple caches may be scanned). */
+  cacheDir: string;
   repoId: string;
   sizeOnDisk: I64;
   lastModifiedMs: I64;

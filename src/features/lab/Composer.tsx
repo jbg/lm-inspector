@@ -149,6 +149,17 @@ export function Composer() {
               value={plans.execution}
               onChange={(v) => plans.setExecution(v as "controlled" | "observed")}
             />
+            {controlUnsupported !== undefined && (
+              <p
+                title={controlUnsupported}
+                style={{ fontFamily: "var(--font-code)", fontSize: 10, color: "var(--text-muted)", margin: "6px 0 0", maxWidth: 520 }}
+              >
+                Controlled execution isn't available for this model's architecture — it
+                can't snapshot execution state, which stepping, forcing, and branching
+                need. Generation, captures, and pre-planned interventions still work in
+                observed mode.
+              </p>
+            )}
           </div>
         )}
 

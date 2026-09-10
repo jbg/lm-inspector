@@ -63,6 +63,8 @@ interface PlansState {
   toolsJson: string;
   toolChoice: "auto" | "none" | "required";
   enableThinking?: boolean;
+  /** Template kwarg passthrough; undefined = template default. */
+  reasoningEffort?: string;
   sampling: SamplingDraft;
   capture: CaptureRecipeState;
   interventions: InterventionDraft[];
@@ -76,6 +78,7 @@ interface PlansState {
   setToolsJson: (json: string) => void;
   setToolChoice: (choice: "auto" | "none" | "required") => void;
   setThinking: (on: boolean | undefined) => void;
+  setReasoningEffort: (effort: string | undefined) => void;
   setSampling: (patch: Partial<SamplingDraft>) => void;
   setCapture: (patch: Partial<CaptureRecipeState>) => void;
   setInterventions: (list: InterventionDraft[]) => void;
@@ -92,6 +95,7 @@ export const usePlans = create<PlansState>((set) => ({
   toolsJson: "",
   toolChoice: "auto",
   enableThinking: undefined,
+  reasoningEffort: undefined,
   // Sampling fields start unset: eredu resolves unset overrides from the
   // checkpoint's generation_config. Only the seed is ours (request-level;
   // checkpoints carry no seed).
@@ -119,6 +123,7 @@ export const usePlans = create<PlansState>((set) => ({
   setToolsJson: (toolsJson) => set({ toolsJson }),
   setToolChoice: (toolChoice) => set({ toolChoice }),
   setThinking: (enableThinking) => set({ enableThinking }),
+  setReasoningEffort: (reasoningEffort) => set({ reasoningEffort }),
   setSampling: (patch) => set((s) => ({ sampling: { ...s.sampling, ...patch } })),
   setCapture: (patch) => set((s) => ({ capture: { ...s.capture, ...patch } })),
   setInterventions: (interventions) => set({ interventions }),
@@ -277,6 +282,7 @@ export function buildStartSpec(
     | "toolsJson"
     | "toolChoice"
     | "enableThinking"
+    | "reasoningEffort"
     | "sampling"
     | "capture"
     | "interventions"
@@ -310,6 +316,7 @@ export function buildStartSpec(
     mode: state.textMode ? "text" : "auto",
     rawText: state.textMode ? state.rawText : undefined,
     enableThinking: state.enableThinking,
+    reasoningEffort: state.reasoningEffort,
     overrides,
     strategy:
       s.strategy === "mirostatV2"

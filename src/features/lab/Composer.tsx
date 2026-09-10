@@ -77,15 +77,44 @@ export function Composer() {
           <MessageEditor messages={plans.messages} onChange={plans.setMessages} />
         )}
 
-        {!plans.textMode && (info?.chatTemplateKwargs ?? []).includes("enable_thinking") && (
-          <div style={{ display: "flex", gap: 20, marginTop: 12 }}>
-            <Switch
-              label="Thinking"
-              checked={plans.enableThinking === true}
-              onChange={(v) => plans.setThinking(v ? true : undefined)}
-            />
-          </div>
-        )}
+        {/* enable_thinking is tri-state in eredu: unset = whatever the
+            template itself defaults to (some models default thinking on). */}
+        {!plans.textMode &&
+          ["enable_thinking", "reasoning_effort"].some((k) =>
+            (info?.chatTemplateKwargs ?? []).includes(k),
+          ) && (
+            <div style={{ display: "flex", gap: 16, marginTop: 12, alignItems: "flex-end" }}>
+              {(info?.chatTemplateKwargs ?? []).includes("enable_thinking") && (
+                <Select
+                  label="Thinking"
+                  options={[
+                    { value: "default", label: "Template default" },
+                    { value: "on", label: "On" },
+                    { value: "off", label: "Off" },
+                  ]}
+                  value={
+                    plans.enableThinking === undefined ? "default" : plans.enableThinking ? "on" : "off"
+                  }
+                  onChange={(v) => plans.setThinking(v === "default" ? undefined : v === "on")}
+                  style={{ width: 170 }}
+                />
+              )}
+              {(info?.chatTemplateKwargs ?? []).includes("reasoning_effort") && (
+                <Select
+                  label="Reasoning effort"
+                  options={[
+                    { value: "default", label: "Template default" },
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]}
+                  value={plans.reasoningEffort ?? "default"}
+                  onChange={(v) => plans.setReasoningEffort(v === "default" ? undefined : v)}
+                  style={{ width: 170 }}
+                />
+              )}
+            </div>
+          )}
 
         {!plans.textMode && <ToolsPanel error={toolsError} />}
 

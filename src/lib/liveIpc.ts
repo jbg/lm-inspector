@@ -39,6 +39,10 @@ export interface LoadedModelInfo {
   /** Why controlled execution is unavailable for this architecture (probed
    * at load); absent = controlled runs work. */
   controlSupport?: string;
+  /** Why observed (free-run) generation is unavailable: it runs the semantic
+   * pipeline only, so a chat template with no recognized format can never
+   * run observed. Absent = observed runs work. */
+  observedSupport?: string;
   /** Judged draft window (max_draft_tokens) when drafting was realized. */
   draftCapacity?: number;
 }

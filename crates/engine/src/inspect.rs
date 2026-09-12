@@ -20,6 +20,8 @@ use crate::error::{error_chain, IpcError};
 struct DraftingSupport {
     /// Embedded prediction-head capacity (max draft tokens). None = the
     /// report could not measure it (unknown ≠ 0); Some(0) = no heads.
+    /// Serialized as absent when None so the frontend's presence check holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
     embedded_capacity: Option<u64>,
     /// Whether this family is an external-assistant target. Family-dispatched
     /// in eredu-architectures; at the pinned revision the targets are gemma4

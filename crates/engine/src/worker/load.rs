@@ -193,48 +193,65 @@ pub fn load_model(
         _ => "unknown".to_string(),
     };
 
-    // Probe controlled-execution support once: eredu only reports it at
-    // start_controlled_* (backend support is separate from chat admission),
-    // so attempt a throwaway controlled-text session and discard its records.
-    // Only the exact capture-unsupported gate counts as a verdict; any other
-    // failure is not evidence and controlled runs stay offered.
-    let control_support: Option<String> = (|| {
+    // Probe chat-pipeline support once. Controlled-execution support is only
+    // reported by eredu at start_controlled_* (backend support is separate
+    // from chat admission), so attempt a throwaway controlled-text session
+    // and discard its records. Only the exact capture-unsupported gate counts
+    // as a verdict; any other failure is not evidence and controlled runs
+    // stay offered. The same prepared chat also yields the observed verdict:
+    // observed (free-run) generation is semantic-only, so a template without
+    // a recognized format can never run observed.
+    let (control_support, observed_support): (Option<String>, Option<String>) = {
         use std::ops::ControlFlow;
         let request = eredu::runtime::chat::ChatTemplateRequest {
             messages: vec![serde_json::json!({"role": "user", "content": "probe"})],
             add_generation_prompt: true,
             ..Default::default()
         };
-        let chat = model.prepare_chat(request).ok()?;
-        let resolved = crate::budgets::resolve(&Default::default());
-        let prepared = model
-            .prepare_observed_chat(
-                &chat,
-                PreparedChatGenerationSettings {
-                    overrides: Default::default(),
-                    strategy: eredu_core::TextSamplingStrategy::Standard,
-                    seed: 0,
-                },
-                eredu_core::capture::CapturePlan::none(),
-                resolved.trace,
-            )
-            .ok()?;
-        match model.start_controlled_text(
-            prepared,
-            &[],
-            eredu_core::execution_control::GenerationControlHandle::default(),
-            |_| ControlFlow::Continue(()),
-        ) {
-            Ok(mut session) => {
-                let _ = session.cancel(|_| ControlFlow::Continue(()));
-                None
+        match model.prepare_chat(request) {
+            // Failed template render is no verdict on either pipeline.
+            Err(_) => (None, None),
+            Ok(chat) => {
+                let observed = match chat.semantic_support() {
+                    eredu::runtime::chat::SemanticSupport::Supported => None,
+                    eredu::runtime::chat::SemanticSupport::Unsupported { reason } => {
+                        Some(reason.clone())
+                    }
+                };
+                let control = (|| {
+                    let resolved = crate::budgets::resolve(&Default::default());
+                    let prepared = model
+                        .prepare_observed_chat(
+                            &chat,
+                            PreparedChatGenerationSettings {
+                                overrides: Default::default(),
+                                strategy: eredu_core::TextSamplingStrategy::Standard,
+                                seed: 0,
+                            },
+                            eredu_core::capture::CapturePlan::none(),
+                            resolved.trace,
+                        )
+                        .ok()?;
+                    match model.start_controlled_text(
+                        prepared,
+                        &[],
+                        eredu_core::execution_control::GenerationControlHandle::default(),
+                        |_| ControlFlow::Continue(()),
+                    ) {
+                        Ok(mut session) => {
+                            let _ = session.cancel(|_| ControlFlow::Continue(()));
+                            None
+                        }
+                        Err(eredu::api::ControlledGenerationError::Capture(
+                            eredu_core::capture::CaptureError::Unsupported(reason),
+                        )) => Some(reason),
+                        Err(_) => None,
+                    }
+                })();
+                (control, observed)
             }
-            Err(eredu::api::ControlledGenerationError::Capture(
-                eredu_core::capture::CaptureError::Unsupported(reason),
-            )) => Some(reason),
-            Err(_) => None,
         }
-    })();
+    };
 
     let info = LoadedModelInfoDto {
         model_epoch,
@@ -254,6 +271,7 @@ pub fn load_model(
         intervention_discovery,
         speculative_intervention_discovery,
         control_support,
+        observed_support,
         draft_capacity,
     };
     stage("ready");

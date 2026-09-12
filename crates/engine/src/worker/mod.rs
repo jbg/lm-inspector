@@ -109,6 +109,7 @@ pub struct LoadedModelInfoDto {
     pub model_label: String,
     /// Full HF repo id (e.g. "org/name") parsed from the cache path, when the
     /// artifact lives under a "models--org--name" cache directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_id: Option<String>,
     pub effective_model_type: String,
     pub eos_token_ids: Vec<u32>,
@@ -120,15 +121,26 @@ pub struct LoadedModelInfoDto {
     pub chat_template_kwargs: Vec<String>,
     /// The checkpoint's own generation_config (eredu resolves unset request
     /// overrides from this) — the UI shows these as inherited placeholders.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint_generation_config: Option<serde_json::Value>,
     /// Serialized `CaptureDiscovery` / `InterventionDiscovery` JSON.
     pub capture_discovery: String,
     pub intervention_discovery: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub speculative_intervention_discovery: Option<String>,
     /// Why controlled execution (step/pause/force/snapshots) is unavailable
-    /// for this architecture, probed at load; None = controlled runs work.
+    /// for this architecture, probed at load; absent = controlled runs work.
+    /// None must serialize as absent, not null — the frontend distinguishes
+    /// "supported" from "unsupported" by the field's presence.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub control_support: Option<String>,
+    /// Why observed (free-run) generation is unavailable: it runs the
+    /// semantic pipeline only, so a chat template with no recognized format
+    /// can never run observed. Absent = observed runs work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_support: Option<String>,
     /// Judged draft window (max_draft_tokens) when drafting was realized.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_capacity: Option<u32>,
 }
 
@@ -187,7 +199,9 @@ pub struct RunStartedDto {
     pub speculative: bool,
     pub clamp_notes: Vec<crate::budgets::ClampNote>,
     /// Serialized ExecutionControlCapabilities (controlled runs only).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_support: Option<String>,
     /// Set when the run is observed-only (no step/pause/force/snapshots):
     /// the backend's reason controlled execution is unavailable.

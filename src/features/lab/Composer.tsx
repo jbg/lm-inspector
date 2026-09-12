@@ -25,11 +25,23 @@ export function Composer() {
   // run kind is a per-run choice whenever the load carried a drafter.
   const draftingAvailable = (info?.drafting ?? "disabled") !== "disabled";
   const speculative = draftingAvailable && plans.useDrafting;
-  const controlUnsupported = info?.controlSupport;
-  // Effective session mode: a model without controlled execution can only run
-  // observed, so force it regardless of the stored preference (derived, not a
-  // coercing effect — the radio and the run stay in sync with no stale frame).
-  const execution = controlUnsupported ? "observed" : plans.execution;
+  // `?? undefined` normalizes a serialized null (absent-as-null from older
+  // engine builds) so presence checks below can rely on strict undefined.
+  const controlUnsupported = info?.controlSupport ?? undefined;
+  // Observed generation is semantic-only: unavailable when the template has
+  // no recognized format, and always for raw-text prompts.
+  const observedUnsupported = plans.textMode
+    ? "raw text prompts run the text pipeline — observed generation is semantic"
+    : (info?.observedSupport ?? undefined);
+  // Effective session mode: when exactly one mode is unavailable, force the
+  // other regardless of the stored preference (derived, not a coercing effect
+  // — the radio and the run stay in sync with no stale frame).
+  const execution =
+    controlUnsupported !== undefined && observedUnsupported === undefined
+      ? "observed"
+      : observedUnsupported !== undefined && controlUnsupported === undefined
+        ? "controlled"
+        : plans.execution;
 
   const { layerOutputPaths, routingPaths } = useMemo(() => {
     const points = session.captureDiscovery?.catalog?.points ?? [];
@@ -141,7 +153,12 @@ export function Composer() {
                   disabled: controlUnsupported !== undefined,
                   title: controlUnsupported,
                 },
-                { value: "observed", label: "Observed — free-run to completion" },
+                {
+                  value: "observed",
+                  label: "Observed — free-run to completion",
+                  disabled: observedUnsupported !== undefined,
+                  title: observedUnsupported,
+                },
               ]}
               value={execution}
               onChange={(v) => plans.setExecution(v as "controlled" | "observed")}
@@ -155,6 +172,16 @@ export function Composer() {
                 can't snapshot execution state, which stepping, forcing, and branching
                 need. Generation, captures, and pre-planned interventions still work in
                 observed mode.
+              </p>
+            )}
+            {observedUnsupported !== undefined && !plans.textMode && (
+              <p
+                title={observedUnsupported}
+                style={{ fontFamily: "var(--font-code)", fontSize: 10, color: "var(--text-muted)", margin: "6px 0 0", maxWidth: 520 }}
+              >
+                Observed (free-run) generation isn't available — it runs the semantic
+                pipeline, and this chat template has no recognized format. Controlled
+                execution runs the text fallback instead.
               </p>
             )}
           </div>

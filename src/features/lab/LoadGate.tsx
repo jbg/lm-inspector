@@ -145,7 +145,7 @@ export function DraftingSection({
 
   const support = entry?.bundle?.drafting;
   const embeddedCapacity =
-    support?.embeddedCapacity !== undefined ? i64ToNumber(support.embeddedCapacity) : undefined;
+    support?.embeddedCapacity != null ? i64ToNumber(support.embeddedCapacity) : undefined;
   const embeddedAvailable = embeddedCapacity !== undefined && embeddedCapacity > 0;
   const externalAvailable = support?.externalTarget === true;
 

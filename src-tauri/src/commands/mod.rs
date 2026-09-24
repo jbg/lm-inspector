@@ -10,6 +10,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
             cold::inspect_model,
             cold::tokenize_preview,
             cold::backend_availability,
+            cold::estimate_model_memory,
             cold::list_runs,
             cold::get_run_journal,
             cold::pin_run,
@@ -60,6 +61,15 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
             live::spec_release_branch,
             live::spec_snapshot_support,
             live::end_speculative_run,
+            live::get_parameter_discovery,
+            live::component_analyze,
+            live::component_mask_trial,
+            live::query_parameter,
+            live::install_parameter_overlay,
+            live::remove_parameter_overlay,
+            live::forecast_run_memory,
+            live::forecast_remaining,
+            live::spec_forecast_remaining,
         ]
     }
     #[cfg(not(feature = "mlx"))]
@@ -69,6 +79,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
             cold::inspect_model,
             cold::tokenize_preview,
             cold::backend_availability,
+            cold::estimate_model_memory,
             cold::list_runs,
             cold::get_run_journal,
             cold::pin_run,

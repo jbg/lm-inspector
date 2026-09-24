@@ -12,12 +12,13 @@ license = "MIT OR Apache-2.0"
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-eredu = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2", default-features = false, features = ["onig", "esaxx_fast", "image", "audio"] }
-eredu-core = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2" }
-eredu-architectures = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2" }
-eredu-runtime = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2" }
-eredu-backend-mlx = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2", default-features = false }
-eredu-text = { git = "https://github.com/jbg/eredu.git", rev = "df0af944432c73bda344c8b45c687ab681c024b2" }
+eredu = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e", default-features = false, features = ["onig", "esaxx_fast", "image", "audio"] }
+eredu-core = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e" }
+eredu-architectures = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e" }
+eredu-runtime = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e" }
+eredu-backend-mlx = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e", default-features = false }
+eredu-text = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e" }
+eredu-evaluation = { git = "https://github.com/jbg/eredu.git", rev = "3d6fd6dac6436d0e396d47ccba0804d9cd90833e" }
 hf-cache-reader = "=0.1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

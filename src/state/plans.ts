@@ -23,6 +23,12 @@ export interface SamplingDraft {
   eta: number;
 }
 
+/** Per-run prefill policy. Unset = eredu's default (512-position chunks on
+ * eligible runs); 0 = one complete pass. */
+export interface InferenceDraft {
+  prefillChunkPositions?: number;
+}
+
 export interface CaptureRecipeState {
   topK: { enabled: boolean; count: number };
   layerTrajectory: { enabled: boolean; every: number };
@@ -70,10 +76,16 @@ interface PlansState {
   /** Template kwarg passthrough; undefined = template default. */
   reasoningEffort?: string;
   sampling: SamplingDraft;
+  inference: InferenceDraft;
   capture: CaptureRecipeState;
   interventions: InterventionDraft[];
   device: "cpu" | "accelerator";
   drafting: Drafting;
+  /** Load-time MLX allocator-cache limit in GiB; blank = MLX's own limit. */
+  allocatorCacheLimitGib?: number;
+  /** Application memory budget (GiB) forecasts are compared with; blank =
+   * observed availability only (often unobservable, then no verdict). */
+  memoryBudgetGib?: number;
 
   setMessages: (messages: MessageDraft[]) => void;
   setRawText: (text: string) => void;
@@ -85,10 +97,13 @@ interface PlansState {
   setThinking: (on: boolean | undefined) => void;
   setReasoningEffort: (effort: string | undefined) => void;
   setSampling: (patch: Partial<SamplingDraft>) => void;
+  setInference: (patch: Partial<InferenceDraft>) => void;
   setCapture: (patch: Partial<CaptureRecipeState>) => void;
   setInterventions: (list: InterventionDraft[]) => void;
   setDevice: (device: "cpu" | "accelerator") => void;
   setDrafting: (drafting: Drafting) => void;
+  setAllocatorCacheLimitGib: (gib: number | undefined) => void;
+  setMemoryBudgetGib: (gib: number | undefined) => void;
   setTargetArtifact: (target?: { path: string; label: string; repoId?: string }) => void;
 }
 
@@ -111,6 +126,7 @@ export const usePlans = create<PlansState>((set) => ({
     tau: 5,
     eta: 0.1,
   },
+  inference: {},
   capture: {
     topK: { enabled: true, count: 16 },
     layerTrajectory: { enabled: false, every: 1 },
@@ -132,10 +148,13 @@ export const usePlans = create<PlansState>((set) => ({
   setThinking: (enableThinking) => set({ enableThinking }),
   setReasoningEffort: (reasoningEffort) => set({ reasoningEffort }),
   setSampling: (patch) => set((s) => ({ sampling: { ...s.sampling, ...patch } })),
+  setInference: (patch) => set((s) => ({ inference: { ...s.inference, ...patch } })),
   setCapture: (patch) => set((s) => ({ capture: { ...s.capture, ...patch } })),
   setInterventions: (interventions) => set({ interventions }),
   setDevice: (device) => set({ device }),
   setDrafting: (drafting) => set({ drafting }),
+  setAllocatorCacheLimitGib: (allocatorCacheLimitGib) => set({ allocatorCacheLimitGib }),
+  setMemoryBudgetGib: (memoryBudgetGib) => set({ memoryBudgetGib }),
   setTargetArtifact: (targetArtifact) => set({ targetArtifact }),
 }));
 
@@ -294,6 +313,7 @@ export function buildStartSpec(
     | "enableThinking"
     | "reasoningEffort"
     | "sampling"
+    | "inference"
     | "capture"
     | "interventions"
   >,
@@ -341,5 +361,24 @@ export function buildStartSpec(
     // Speculative runs have their own session shape; the choice rides
     // controlled starts only.
     execution: speculative ? undefined : state.execution,
+    inference: buildInferencePolicy(state.inference),
   };
+}
+
+export function buildInferencePolicy(draft: InferenceDraft): StartRunSpec["inference"] {
+  const chunk = draft.prefillChunkPositions;
+  if (chunk === undefined || !Number.isFinite(chunk) || chunk < 0) return undefined;
+  return { prefillChunkPositions: Math.floor(chunk) };
+}
+
+/** Load-plan allocator-cache limit in bytes from the GiB draft. */
+export function allocatorCacheLimitBytes(gib: number | undefined): number | undefined {
+  if (gib === undefined || !Number.isFinite(gib) || gib < 0) return undefined;
+  return Math.round(gib * GIB);
+}
+
+/** Forecast budget in bytes from the GiB draft; blank or zero = no budget. */
+export function memoryBudgetBytes(gib: number | undefined): number | undefined {
+  if (gib === undefined || !Number.isFinite(gib) || gib <= 0) return undefined;
+  return Math.round(gib * GIB);
 }

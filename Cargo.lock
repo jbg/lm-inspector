@@ -62,6 +62,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "anstream"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
+dependencies = [
+ "anstyle",
+ "anstyle-parse",
+ "anstyle-query",
+ "anstyle-wincon",
+ "colorchoice",
+ "is_terminal_polyfill",
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
+
+[[package]]
+name = "anstyle-parse"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
+dependencies = [
+ "utf8parse",
+]
+
+[[package]]
+name = "anstyle-query"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "anstyle-wincon"
+version = "3.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
+dependencies = [
+ "anstyle",
+ "once_cell_polyfill",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -401,6 +451,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap"
+version = "4.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
+dependencies = [
+ "clap_builder",
+ "clap_derive",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -408,6 +498,12 @@ checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
 dependencies = [
  "cc",
 ]
+
+[[package]]
+name = "colorchoice"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "combine"
@@ -1032,7 +1128,7 @@ dependencies = [
 [[package]]
 name = "eredu"
 version = "0.5.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-architectures",
  "eredu-backend-mlx",
@@ -1052,7 +1148,7 @@ dependencies = [
 [[package]]
 name = "eredu-architectures"
 version = "0.5.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-checkpoint",
  "eredu-core",
@@ -1069,7 +1165,7 @@ dependencies = [
 [[package]]
 name = "eredu-backend-mlx"
 version = "0.5.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-architectures",
  "eredu-backend-mlx-macros",
@@ -1092,7 +1188,7 @@ dependencies = [
 [[package]]
 name = "eredu-backend-mlx-macros"
 version = "0.1.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1102,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "eredu-checkpoint"
 version = "0.2.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-gguf",
  "safetensors",
@@ -1113,9 +1209,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "eredu-codec"
+version = "0.5.0"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
+dependencies = [
+ "eredu-checkpoint",
+ "eredu-nn",
+ "eredu-runtime",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "eredu-core"
 version = "0.5.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-checkpoint",
  "eredu-gguf",
@@ -1126,9 +1233,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "eredu-evaluation"
+version = "0.5.0"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
+dependencies = [
+ "clap",
+ "eredu-architectures",
+ "eredu-codec",
+ "eredu-core",
+ "eredu-nn",
+ "eredu-runtime",
+ "safetensors",
+ "sentencepiece-rs",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "eredu-gguf"
 version = "0.1.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "half",
  "thiserror 2.0.20",
@@ -1137,7 +1262,7 @@ dependencies = [
 [[package]]
 name = "eredu-media"
 version = "0.4.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-core",
  "image",
@@ -1148,7 +1273,7 @@ dependencies = [
 [[package]]
 name = "eredu-nn"
 version = "0.2.1"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-checkpoint",
  "eredu-nn-macros",
@@ -1158,7 +1283,7 @@ dependencies = [
 [[package]]
 name = "eredu-nn-macros"
 version = "0.1.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1168,7 +1293,7 @@ dependencies = [
 [[package]]
 name = "eredu-runtime"
 version = "0.5.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "eredu-checkpoint",
  "eredu-core",
@@ -1183,7 +1308,7 @@ dependencies = [
 [[package]]
 name = "eredu-text"
 version = "0.1.1"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1229,9 +1354,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.19.1"
+version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e0387578e845beb7a1acff126228499f26cb18edf12919cc513bb863266464"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -2075,6 +2200,7 @@ dependencies = [
  "eredu-architectures",
  "eredu-backend-mlx",
  "eredu-core",
+ "eredu-evaluation",
  "eredu-runtime",
  "eredu-text",
  "hf-cache-reader",
@@ -2091,6 +2217,12 @@ name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
+
+[[package]]
+name = "is_terminal_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
@@ -2279,7 +2411,7 @@ dependencies = [
  "bytecount",
  "data-encoding",
  "email_address",
- "fancy-regex 0.19.1",
+ "fancy-regex 0.19.2",
  "fraction",
  "getrandom 0.3.4",
  "itoa",
@@ -2963,6 +3095,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "once_cell_polyfill"
+version = "1.70.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
 name = "onig"
 version = "6.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3552,7 +3690,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "safemlx"
 version = "0.3.1"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "bytemuck",
  "half",
@@ -3574,7 +3712,7 @@ dependencies = [
 [[package]]
 name = "safemlx-internal-macros"
 version = "0.2.0"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "itertools 0.15.0",
  "proc-macro2",
@@ -3585,7 +3723,7 @@ dependencies = [
 [[package]]
 name = "safemlx-sys"
 version = "0.2.3"
-source = "git+https://github.com/jbg/eredu.git?rev=df0af944432c73bda344c8b45c687ab681c024b2#df0af944432c73bda344c8b45c687ab681c024b2"
+source = "git+https://github.com/jbg/eredu.git?rev=3d6fd6dac6436d0e396d47ccba0804d9cd90833e#3d6fd6dac6436d0e396d47ccba0804d9cd90833e"
 dependencies = [
  "cmake",
 ]
@@ -3697,6 +3835,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "sentencepiece-rs"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bc4483945bfd66b8727ed59005af1543d3d966ca92f9bc065bfef532de1d7e8"
 
 [[package]]
 name = "serde"
@@ -4912,6 +5056,12 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "utf8parse"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"

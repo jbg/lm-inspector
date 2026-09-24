@@ -3,12 +3,14 @@ import { useUi, type DockTab } from "../../../state/ui";
 import type { RunJournal } from "../../../state/journal/journal";
 import { AlternatesPanel } from "./AlternatesPanel";
 import { SignalsView } from "./SignalsView";
+import { ComponentsPanel } from "./ComponentsPanel";
 import { EditsView } from "./EditsView";
 import { StatsView } from "./StatsView";
 
 const TABS: { value: DockTab; label: string }[] = [
   { value: "alternates", label: "Alternates" },
   { value: "signals", label: "Signals" },
+  { value: "components", label: "Components" },
   { value: "edits", label: "Edits" },
   { value: "stats", label: "Stats" },
 ];
@@ -57,6 +59,7 @@ export function Dock({ journal }: { journal: RunJournal }) {
       </div>
       {tab === "alternates" && <AlternatesPanel journal={journal} />}
       {tab === "signals" && <SignalsView journal={journal} />}
+      {tab === "components" && <ComponentsPanel journal={journal} />}
       {tab === "edits" && <EditsView journal={journal} />}
       {tab === "stats" && <StatsView journal={journal} />}
     </Card>

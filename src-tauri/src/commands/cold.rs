@@ -54,6 +54,50 @@ pub async fn tokenize_preview(path: String, text: String) -> Result<Vec<TokenPie
     .await
 }
 
+/// Cold memory forecast for an artifact (nothing is loaded): loading
+/// included, for `input_positions` prompt positions on the inspector's fully
+/// resident plan. Live builds only — the projection needs the backend's
+/// mechanism facts.
+#[tauri::command]
+pub async fn estimate_model_memory(
+    path: String,
+    device: String,
+    input_positions: u64,
+    max_output_tokens: Option<u64>,
+    prefill_chunk_tokens: u64,
+    budget_bytes: Option<u64>,
+    cache_limit_bytes: Option<u64>,
+) -> Result<serde_json::Value, IpcError> {
+    #[cfg(feature = "mlx")]
+    {
+        run_blocking(move || {
+            let device = match device.as_str() {
+                "cpu" => inspector_engine::worker::DeviceDto::Cpu,
+                _ => inspector_engine::worker::DeviceDto::Accelerator,
+            };
+            let forecast = inspector_engine::memory::estimate_cold(
+                &PathBuf::from(path),
+                device,
+                input_positions,
+                max_output_tokens,
+                prefill_chunk_tokens,
+                budget_bytes,
+                cache_limit_bytes,
+            )?;
+            serde_json::to_value(forecast)
+                .map_err(|e| IpcError::Internal { message: format!("forecast serialization: {e}") })
+        })
+        .await
+    }
+    #[cfg(not(feature = "mlx"))]
+    {
+        let _ = (path, device, input_positions, max_output_tokens, prefill_chunk_tokens, budget_bytes, cache_limit_bytes);
+        Err(IpcError::BackendUnavailable {
+            requires: "mlx".into(),
+        })
+    }
+}
+
 #[tauri::command]
 pub fn backend_availability() -> BackendAvailabilityDto {
     BackendAvailabilityDto {

@@ -40,6 +40,33 @@ fn main() {
     });
     println!("artifact: {artifact}");
 
+    // Cold forecast (nothing loaded): loading included, 2000 prompt
+    // positions, 32 output tokens, 512-token chunks.
+    // INSPECTOR_MEMORY_BUDGET=<bytes> supplies the application budget the
+    // fit verdict compares with (the backend cannot observe availability).
+    let budget: Option<u64> = std::env::var("INSPECTOR_MEMORY_BUDGET").ok().and_then(|v| v.parse().ok());
+    let cold = inspector_engine::memory::estimate_cold(
+        std::path::Path::new(&artifact),
+        DeviceDto::Accelerator,
+        2000,
+        Some(32),
+        512,
+        budget,
+        std::env::var("INSPECTOR_CACHE_LIMIT").ok().and_then(|v| v.parse().ok()),
+    )
+    .expect("cold forecast");
+    let estimate: serde_json::Value = serde_json::from_str(&cold.estimate).unwrap();
+    println!(
+        "cold forecast: {} · effective chunk {} · lifecycle peak {}..{:?} · available {:?} · budget {:?} · candidates {:?}",
+        cold.fit,
+        cold.effective_chunk_tokens,
+        estimate["domains"][0]["overall_peak"]["lower_bytes"],
+        estimate["domains"][0]["overall_peak"]["upper_bytes"],
+        cold.available_bytes,
+        cold.application_limit_bytes,
+        cold.candidates.iter().map(|c| format!("{} → {} ({}, −{})", c.label, c.generation_peak_upper_bytes, c.fit, c.saving_bytes)).collect::<Vec<_>>(),
+    );
+
     let sink = Arc::new(CollectingSink(Mutex::new(Vec::new())));
     let gate = Arc::new(DeliveryGate::default());
     let journal = Arc::new(JournalStore::default());
@@ -48,7 +75,13 @@ fn main() {
     let start = std::time::Instant::now();
     let handle = worker::spawn(
         artifact.clone().into(),
-        LoadPlanDto { device: DeviceDto::Accelerator, drafting: None },
+        LoadPlanDto {
+            device: DeviceDto::Accelerator,
+            drafting: None,
+            // INSPECTOR_CACHE_LIMIT=<bytes> bounds MLX cache retention so the
+            // forecast gets a bounded upper end.
+            allocator_cache_limit_bytes: std::env::var("INSPECTOR_CACHE_LIMIT").ok().and_then(|v| v.parse().ok()),
+        },
         1,
         sink.clone(),
         gate,
@@ -67,6 +100,7 @@ fn main() {
 
     let spec = StartRunSpecDto {
         execution: None,
+        inference: None,
         messages: vec![serde_json::json!({"role": "user", "content": "Name three colors."})],
         tools: vec![],
         tool_choice: None,
@@ -99,6 +133,62 @@ fn main() {
         budgets: None,
         created_ms: None,
     };
+    // Memory forecast of exactly this run, on the idle model: eredu's cold
+    // estimator over the selection this load admitted, the prompt rendered
+    // and tokenized the way the run will be. Captures keep a full prefill
+    // pass, so the forecast must say so.
+    println!(
+        "prefill chunking: {}",
+        handle
+            .info
+            .prefill_chunking_unsupported
+            .as_deref()
+            .unwrap_or("supported by this executable")
+    );
+    let forecast = handle
+        .request(|reply| Command::ForecastMemory { spec: Box::new(spec.clone()), speculative: false, budget_bytes: budget, reply })
+        .expect("forecast failed");
+    println!(
+        "forecast: {} · {} positions · chunk {}→{} · full pass: {:?} · placement {} · available {:?} · resident {:?} · cache limit {:?}",
+        forecast.fit,
+        forecast.input_positions,
+        forecast.requested_chunk_tokens,
+        forecast.effective_chunk_tokens,
+        forecast.full_pass,
+        forecast.placement,
+        forecast.available_bytes,
+        forecast.already_resident_bytes,
+        forecast.allocator_cache_limit_bytes,
+    );
+    println!(
+        "  logits contract: {} · cache policy {:?} · speculative {}",
+        forecast.logits, forecast.allocator_cache_policy, forecast.speculative
+    );
+    // Captured runs are bounded by their admitted capture limits now — on
+    // executables whose ordinary workspace eredu covers (chunk-capable dense
+    // decoders); uncovered families keep an unknown upper end regardless.
+    let captured_upper = estimate["domains"][0]["generation_peak"]["upper_bytes"].as_u64();
+    if handle.info.prefill_chunking_unsupported.is_none() {
+        assert!(captured_upper.is_some(), "captured runs must now carry a bounded upper end");
+    }
+    let estimate: serde_json::Value = serde_json::from_str(&forecast.estimate).unwrap();
+    for domain in estimate["domains"].as_array().unwrap() {
+        println!(
+            "  {} generation peak {}..{:?} · additional {}..{:?} · fit {}",
+            domain["domain"],
+            domain["generation_peak"]["lower_bytes"],
+            domain["generation_peak"]["upper_bytes"],
+            domain["additional_generation_peak"]["lower_bytes"],
+            domain["additional_generation_peak"]["upper_bytes"],
+            domain["fit"],
+        );
+    }
+    for line in &forecast.recommendations {
+        println!("  · {line}");
+    }
+    assert!(forecast.full_pass.is_some(), "a captured run must report a full prefill pass");
+    assert_eq!(forecast.effective_chunk_tokens, forecast.input_positions);
+
     let started = handle
         .request(|reply| Command::StartRun { spec: Box::new(spec), reply })
         .expect("start_run failed");
@@ -113,6 +203,43 @@ fn main() {
         .expect("step failed");
     println!("after 6 steps: {} · {} tokens", status.status, status.token_count);
     assert!(status.token_count >= 1, "no tokens generated");
+
+    // Mid-session outlook: 32 more predictions from the paused frontier.
+    let outlook = handle
+        .request(|reply| Command::Session(SessionCommand::ForecastRemaining { additional_tokens: std::env::var("INSPECTOR_OUTLOOK").ok().and_then(|v| v.parse().ok()).unwrap_or(32), budget_bytes: budget, reply }))
+        .expect("continuation forecast failed");
+    let outlook_estimate: serde_json::Value = serde_json::from_str(&outlook.estimate).unwrap();
+    println!(
+        "continuation forecast: {} · from {} positions · +{} tokens · generation peak {}..{:?} · additional {}..{:?} · phases {:?}",
+        outlook.fit,
+        outlook.input_positions,
+        outlook.max_output_tokens.unwrap_or(0),
+        outlook_estimate["domains"][0]["generation_peak"]["lower_bytes"],
+        outlook_estimate["domains"][0]["generation_peak"]["upper_bytes"],
+        outlook_estimate["domains"][0]["additional_generation_peak"]["lower_bytes"],
+        outlook_estimate["domains"][0]["additional_generation_peak"]["upper_bytes"],
+        outlook_estimate["domains"][0]["phases"].as_array().map(|p| p.iter().map(|x| x["phase"].to_string()).collect::<Vec<_>>()),
+    );
+    for line in &outlook.recommendations {
+        println!("  · {line}");
+    }
+    if let Some(phases) = outlook_estimate["domains"][0]["phases"].as_array() {
+        for phase in phases {
+            println!(
+                "  phase {} total {}..{:?}: params {:?} state {:?} retained {:?} ({}) workspace {:?} overhead {:?}",
+                phase["phase"],
+                phase["total"]["lower_bytes"],
+                phase["total"]["upper_bytes"],
+                phase["parameters"]["upper_bytes"],
+                phase["persistent_state"]["upper_bytes"],
+                phase["retained_input"]["upper_bytes"],
+                phase["retained_input"]["detail"],
+                phase["workspace"]["upper_bytes"],
+                phase["backend_overhead"]["upper_bytes"],
+            );
+        }
+    }
+    assert!(outlook.continuation);
 
     // Tree status: snapshots should exist (auto cadence).
     let tree = handle
@@ -217,6 +344,72 @@ fn main() {
     handle
         .request(|reply| Command::Session(SessionCommand::EndSession { reply }))
         .expect("end session");
+
+    // Chunked prefill for real: a raw-text prompt well past the 512-position
+    // default chunk, no captures/interventions, controlled session. On a
+    // chunk-capable executable the forecast must report no full-pass reason
+    // and an effective chunk of 512; the run itself must still produce
+    // tokens (eredu settles each chunk before the next and samples only
+    // after the final one).
+    let long_prompt = "The quick brown fox jumps over the lazy dog. ".repeat(120);
+    let long_spec = StartRunSpecDto {
+        execution: None,
+        inference: None,
+        messages: vec![],
+        tools: vec![],
+        tool_choice: None,
+        enable_thinking: None,
+        reasoning_effort: None,
+        mode: Some("text".into()),
+        raw_text: Some(long_prompt),
+        overrides: serde_json::json!({"temperature": 0.0, "max_new_tokens": 4}),
+        strategy: None,
+        seed: Some(1),
+        stops: vec![],
+        capture: None,
+        intervention: None,
+        intervention_draft: None,
+        budgets: None,
+        created_ms: None,
+    };
+    let long_forecast = handle
+        .request(|reply| Command::ForecastMemory { spec: Box::new(long_spec.clone()), speculative: false, budget_bytes: budget, reply })
+        .expect("long forecast failed");
+    println!(
+        "long-prompt forecast: {} · {} positions · chunk {}→{} · full pass: {:?} · candidates {:?}",
+        long_forecast.fit,
+        long_forecast.input_positions,
+        long_forecast.requested_chunk_tokens,
+        long_forecast.effective_chunk_tokens,
+        long_forecast.full_pass,
+        long_forecast.candidates.iter().map(|c| c.label.clone()).collect::<Vec<_>>(),
+    );
+    let chunkable = handle.info.prefill_chunking_unsupported.is_none();
+    if chunkable {
+        assert!(long_forecast.full_pass.is_none(), "chunk-capable executable + no captures must chunk");
+        assert_eq!(long_forecast.effective_chunk_tokens, 512);
+    } else {
+        assert_eq!(long_forecast.effective_chunk_tokens, long_forecast.input_positions);
+    }
+    let long_started = handle
+        .request(|reply| Command::StartRun { spec: Box::new(long_spec), reply })
+        .expect("long start_run failed");
+    let long_status = handle
+        .request(|reply| Command::Session(SessionCommand::Step { steps: 3, reply }))
+        .expect("long step failed");
+    println!(
+        "long-prompt run {}: {} · {} tokens after 3 steps (prefill {} positions{})",
+        long_started.run_id,
+        long_status.status,
+        long_status.token_count,
+        long_forecast.input_positions,
+        if chunkable { ", chunked" } else { ", one pass" },
+    );
+    assert!(long_status.token_count >= 1, "long-prompt run generated no tokens");
+    handle
+        .request(|reply| Command::Session(SessionCommand::EndSession { reply }))
+        .expect("end long session");
+
     handle.shutdown();
     println!("OK — live smoke passed ({} envelopes)", sink.0.lock().unwrap().len());
 }

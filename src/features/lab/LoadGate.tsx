@@ -11,7 +11,7 @@ import { RadioGroup } from "../../goose/ui";
 import { Select } from "../../goose/ui";
 import { Switch } from "../../goose/ui";
 import { useSession } from "../../state/session";
-import { usePlans } from "../../state/plans";
+import { allocatorCacheLimitBytes, usePlans } from "../../state/plans";
 import { useLibrary } from "../../state/library";
 import { useModel } from "../../state/model";
 import { repoDisplayName, formatBytes } from "../../lib/format";
@@ -83,7 +83,7 @@ export function LoadGate({ path, label }: { path?: string; label?: string } = {}
       <Card border padding={24} style={{ maxWidth: 640, borderColor: "var(--color-border-danger)" }}>
         <Eyebrow style={{ marginBottom: 10 }}>Load failed</Eyebrow>
         <p style={{ fontFamily: "var(--font-code)", fontSize: 12 }}>{session.load.message}</p>
-        <Button variant="secondary" size="sm" onClick={() => path && void session.loadModel(path, plans.device, plans.drafting)}>
+        <Button variant="secondary" size="sm" onClick={() => path && void session.loadModel(path, plans.device, plans.drafting, allocatorCacheLimitBytes(plans.allocatorCacheLimitGib))}>
           Retry
         </Button>
       </Card>
@@ -115,7 +115,25 @@ export function LoadGate({ path, label }: { path?: string; label?: string } = {}
 
         <DraftingSection path={path} open={drafterPickerOpen} setOpen={setDrafterPickerOpen} />
 
-        <Button onClick={() => void session.loadModel(path, plans.device, plans.drafting)}>
+        <div>
+          <Eyebrow style={{ marginBottom: 8 }}>Memory</Eyebrow>
+          <Input
+            label="MLX allocator-cache limit (GiB)"
+            type="number"
+            step="any"
+            min="0"
+            placeholder="eredu default: 256 MiB cap"
+            hint="bounds how much freed memory MLX keeps cached; blank = eredu caps MLX's native default at 256 MiB. Process-global: it stays in force for later loads. 0 disables caching."
+            value={plans.allocatorCacheLimitGib === undefined ? "" : String(plans.allocatorCacheLimitGib)}
+            onChange={(e) => {
+              const raw = (e.target as HTMLInputElement).value.trim();
+              plans.setAllocatorCacheLimitGib(raw === "" ? undefined : Number(raw));
+            }}
+            style={{ maxWidth: 360 }}
+          />
+        </div>
+
+        <Button onClick={() => void session.loadModel(path, plans.device, plans.drafting, allocatorCacheLimitBytes(plans.allocatorCacheLimitGib))}>
           Load model
         </Button>
       </div>

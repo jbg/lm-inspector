@@ -18,6 +18,12 @@ pub const MAX_PREVIEW_ELEMENTS: u64 = 4096;
 pub const DEFAULT_HISTOGRAM_EDGES: usize = 32;
 pub const MAX_HISTOGRAM_EDGES: usize = 128;
 pub const DEFAULT_SNAPSHOT_CADENCE: u64 = 8;
+
+/// Headroom subtracted from observed available memory in memory forecasts
+/// (other work and forecast uncertainty); eredu's CLI uses the same figure.
+pub const MEMORY_RESERVE_BYTES: u64 = 256 * MIB;
+/// Output horizon a forecast assumes when a run sets no token limit.
+pub const FORECAST_OUTPUT_TOKENS: u64 = 256;
 pub const SNAPSHOT_CADENCE_RANGE: (u64, u64) = (1, 64);
 
 /// Delivery gate: unacked window before the emit callback blocks.

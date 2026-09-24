@@ -39,7 +39,9 @@ const EXTERNAL_TARGET_FAMILIES: &[&str] = &["gemma4", "muse_glimmer"];
 struct InspectionBundle<'a> {
     /// Full `ModelInspectionReport` (readiness, resources, issues, ...).
     report: &'a eredu_core::ModelInspectionReport,
-    /// Full `ArchitectureDescriptor` (schema 2).
+    /// Full `ArchitectureDescriptor`, including component-analysis topology
+    /// (components, routed_components, component_readout, component_scopes,
+    /// component_transforms) at the descriptor's own schema version.
     architecture: &'a eredu_core::ArchitectureDescriptor,
     /// Tensor catalog descriptors, in catalog order.
     tensors: Vec<&'a eredu_core::checkpoint::TensorDescriptor>,

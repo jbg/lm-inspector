@@ -4,8 +4,10 @@
 //! queue entirely through `SharedControl` (a `GenerationControlHandle` is the
 //! only eredu type that crosses threads).
 
+pub mod component;
 pub mod controlled;
 pub mod load;
+pub mod memory;
 pub mod speculative;
 
 use std::path::PathBuf;
@@ -98,6 +100,11 @@ pub struct LoadPlanDto {
     pub device: DeviceDto,
     #[serde(default)]
     pub drafting: Option<DraftingDto>,
+    /// Process-global MLX allocator-cache limit applied before loading. It
+    /// bounds cache retention (so memory forecasts get a bounded overhead)
+    /// at the cost of more allocator churn. Absent = leave MLX's limit as is.
+    #[serde(default)]
+    pub allocator_cache_limit_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +120,25 @@ pub struct LoadedModelInfoDto {
     pub repo_id: Option<String>,
     pub effective_model_type: String,
     pub eos_token_ids: Vec<u32>,
+    /// Why this executable cannot chunk ordinary plain-text prefill (every
+    /// run then prefills in one pass); absent = bounded prefill chunks work.
+    /// Captures, interventions, media and speculative runs keep a full pass
+    /// regardless.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_chunking_unsupported: Option<String>,
+    /// The process's native allocator-cache limit in force after this load
+    /// (eredu reads it from MLX); absent only when the query failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocator_cache_limit_bytes: Option<u64>,
+    /// Its provenance: "native_default" | "managed_default" | "explicit" |
+    /// "preserved" (eredu caps an untouched native default at 256 MiB when a
+    /// model is realized).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocator_cache_policy: Option<String>,
+    /// The tokenizer's special (control) tokens, ascending by id. Raw-text
+    /// prompts add nothing automatically, so the composer offers these for
+    /// the user to insert literally (BOS, end-of-text, turn markers).
+    pub special_tokens: Vec<SpecialTokenDto>,
     pub has_chat_template: bool,
     pub drafting: String,
     pub vocabulary_size: u32,
@@ -144,6 +170,55 @@ pub struct LoadedModelInfoDto {
     pub draft_capacity: Option<u32>,
 }
 
+/// Per-run prefill policy. Absent = eredu's default (chunks of at most 512
+/// prompt positions on eligible runs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InferencePolicyDto {
+    /// Maximum prompt positions per prefill pass; 0 = one complete pass.
+    /// Only ordinary text runs on chunk-capable executables honor it —
+    /// captures, interventions, media and speculative runs keep a full pass.
+    #[serde(default)]
+    pub prefill_chunk_positions: Option<u64>,
+}
+
+impl InferencePolicyDto {
+    /// The prefill policy for a run spec (absent policy = eredu's default).
+    pub fn prefill_policy(spec: &StartRunSpecDto) -> Result<eredu_core::PrefillChunkPolicy, IpcError> {
+        let requested = spec.inference.as_ref().and_then(|p| p.prefill_chunk_positions);
+        Ok(match requested {
+            None => eredu_core::PrefillChunkPolicy::default(),
+            Some(0) => eredu_core::PrefillChunkPolicy::Unchunked,
+            Some(n) => eredu_core::PrefillChunkPolicy::Bounded(
+                usize::try_from(n)
+                    .ok()
+                    .and_then(std::num::NonZeroUsize::new)
+                    .ok_or_else(|| IpcError::Budget {
+                        budget: "inference.prefillChunkPositions".into(),
+                        detail: "must fit a native position count".into(),
+                    })?,
+            ),
+        })
+    }
+}
+
+/// Backend allocator sample: bytes the MLX allocator currently holds. A
+/// physical measurement, distinct from eredu's logical admission budgets.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllocatorDto {
+    pub active_bytes: u64,
+    pub cached_bytes: u64,
+    pub peak_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecialTokenDto {
+    pub id: u32,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRunSpecDto {
@@ -160,7 +235,10 @@ pub struct StartRunSpecDto {
     /// "auto" | "chat" | "text"
     #[serde(default)]
     pub mode: Option<String>,
-    /// Raw text prompt used when mode = "text" and messages are empty.
+    /// Raw text prompt used when mode = "text". Bypasses the chat template
+    /// and adds no automatic tokens (no BOS): the text is tokenized exactly
+    /// as written and submitted as the token prefix. Special tokens typed
+    /// literally (e.g. "<|endoftext|>") encode to their single ids.
     #[serde(default)]
     pub raw_text: Option<String>,
     #[serde(default)]
@@ -190,6 +268,9 @@ pub struct StartRunSpecDto {
     /// controlled with automatic observed fallback.
     #[serde(default)]
     pub execution: Option<String>,
+    /// Prefill chunking for this run.
+    #[serde(default)]
+    pub inference: Option<InferencePolicyDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,6 +298,8 @@ pub struct StatusDto {
     pub next_prediction: u64,
     pub token_count: u64,
     pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocator: Option<AllocatorDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +410,18 @@ pub enum Command {
     },
     Session(SessionCommand),
     Spec(speculative::SpecCommand),
+    /// Component analysis / parameter access; idle model only (top loop).
+    Component(component::ComponentCommand),
+    /// Request memory forecast for a run spec against the loaded selection;
+    /// idle model only (rendering the prompt needs the model).
+    ForecastMemory {
+        spec: Box<StartRunSpecDto>,
+        speculative: bool,
+        /// Application budget for total modeled memory; the fit verdict
+        /// needs it when the backend cannot observe available capacity.
+        budget_bytes: Option<u64>,
+        reply: Reply<crate::memory::ForecastDto>,
+    },
     Shutdown(Reply<()>),
 }
 
@@ -361,6 +456,13 @@ pub enum SessionCommand {
         reply: Reply<CounterfactualResultDto>,
     },
     TreeStatus { reply: Reply<TreeStatusDto> },
+    /// Memory outlook for `additional_tokens` more predictions from the
+    /// paused session's installed state (decode-only; no loading/prefill).
+    ForecastRemaining {
+        additional_tokens: u64,
+        budget_bytes: Option<u64>,
+        reply: Reply<crate::memory::ForecastDto>,
+    },
     EndSession { reply: Reply<()> },
 }
 
@@ -601,6 +703,10 @@ fn top_loop(mut loaded: load::LoadedWorkerModel, rx: Receiver<Command>, context:
             }
             Command::Session(cmd) => reject_session(cmd),
             Command::Spec(cmd) => speculative::reject(cmd),
+            Command::Component(cmd) => component::handle(cmd, &mut loaded, &context),
+            Command::ForecastMemory { spec, speculative, budget_bytes, reply } => {
+                let _ = reply.send(memory::forecast_run(&mut loaded, &spec, speculative, budget_bytes));
+            }
             Command::Shutdown(reply) => {
                 drop(loaded);
                 let _ = reply.send(Ok(()));
@@ -629,6 +735,7 @@ pub(crate) fn reject_session(cmd: SessionCommand) {
         SessionCommand::ReleaseBranch { reply, .. } => drop(reply.send(Err(err()))),
         SessionCommand::Counterfactual { reply, .. } => drop(reply.send(Err(err()))),
         SessionCommand::TreeStatus { reply } => drop(reply.send(Err(err()))),
+        SessionCommand::ForecastRemaining { reply, .. } => drop(reply.send(Err(err()))),
         SessionCommand::EndSession { reply } => drop(reply.send(Ok(()))),
     }
 }

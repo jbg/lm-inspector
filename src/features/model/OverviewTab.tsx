@@ -1,9 +1,12 @@
-import { Card } from "../../goose/ui";
-import { Eyebrow } from "../../goose/ui";
-import { Tag } from "../../goose/ui";
+import { useState } from "react";
+import { Button, Card, Eyebrow, Input, RadioGroup, Tag } from "../../goose/ui";
 import { formatArtifactFormat, formatBytes, formatCount, UNKNOWN } from "../../lib/format";
-import type { InspectionBundle, Readiness } from "../../lib/types";
+import { estimateModelMemory } from "../../lib/ipc";
+import type { MemoryForecast } from "../../lib/liveIpc";
+import { ipcErrorMessage, type InspectionBundle, type Readiness } from "../../lib/types";
 import type { I64 } from "../../lib/lossless";
+import { allocatorCacheLimitBytes, memoryBudgetBytes, usePlans } from "../../state/plans";
+import { MemoryForecastView } from "../common/MemoryForecastView";
 import { READINESS_FIELDS, ReadinessGlyph } from "./readiness";
 
 export function OverviewTab({ bundle }: { bundle: InspectionBundle }) {
@@ -96,8 +99,136 @@ export function OverviewTab({ bundle }: { bundle: InspectionBundle }) {
           <Eyebrow style={{ marginBottom: 16 }}>Resources</Eyebrow>
           <ResourceRows resources={r.resources} />
         </Card>
+
+        <MemoryForecastCard path={r.path} />
       </div>
     </div>
+  );
+}
+
+/** Cold memory forecast before any weights are loaded: eredu's estimator
+ * over the selection the inspector's fully resident plan would admit on the
+ * chosen device, loading included, for a chosen prompt size. Nothing is
+ * loaded, no device is created. */
+function MemoryForecastCard({ path }: { path: string }) {
+  const device = usePlans((s) => s.device);
+  const setDevice = usePlans((s) => s.setDevice);
+  const budgetGib = usePlans((s) => s.memoryBudgetGib);
+  const setBudgetGib = usePlans((s) => s.setMemoryBudgetGib);
+  const cacheLimitGib = usePlans((s) => s.allocatorCacheLimitGib);
+  const setCacheLimitGib = usePlans((s) => s.setAllocatorCacheLimitGib);
+  const [positions, setPositions] = useState(2048);
+  const [maxTokens, setMaxTokens] = useState<number | undefined>(undefined);
+  const [chunk, setChunk] = useState(512);
+  const [forecast, setForecast] = useState<MemoryForecast>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      setForecast(
+        await estimateModelMemory(
+          path,
+          device,
+          Math.max(1, Math.floor(positions)),
+          maxTokens,
+          Math.max(0, Math.floor(chunk)),
+          memoryBudgetBytes(budgetGib),
+          allocatorCacheLimitBytes(cacheLimitGib),
+        ),
+      );
+    } catch (e) {
+      setForecast(undefined);
+      setError(ipcErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const num = (v: string): number | undefined => (v.trim() === "" ? undefined : Number(v));
+  return (
+    <Card border padding={24}>
+      <Eyebrow style={{ marginBottom: 6 }}>Memory forecast</Eyebrow>
+      <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", margin: "0 0 12px" }}>
+        What loading this artifact fully resident and running a prompt of this size would need,
+        before any weights are loaded. A planning estimate against observed capacity, not a
+        guarantee about process memory.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <RadioGroup
+          name="forecast-device"
+          direction="row"
+          options={[
+            { value: "accelerator", label: "GPU (metal)" },
+            { value: "cpu", label: "CPU" },
+          ]}
+          value={device}
+          onChange={(v) => setDevice(v as "cpu" | "accelerator")}
+        />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+          <Input
+            label="Prompt positions"
+            type="number"
+            min="1"
+            step="1"
+            value={String(positions)}
+            onChange={(e) => setPositions(Number((e.target as HTMLInputElement).value) || 1)}
+          />
+          <Input
+            label="Max tokens"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="256 horizon"
+            value={maxTokens === undefined ? "" : String(maxTokens)}
+            onChange={(e) => setMaxTokens(num((e.target as HTMLInputElement).value))}
+          />
+          <Input
+            label="Prefill chunk"
+            type="number"
+            min="0"
+            step="1"
+            hint="0 = one pass"
+            value={String(chunk)}
+            onChange={(e) => setChunk(Number((e.target as HTMLInputElement).value) || 0)}
+          />
+          <Input
+            label="Budget (GiB)"
+            type="number"
+            min="0"
+            step="any"
+            placeholder="none"
+            hint="verdict compares with this"
+            value={budgetGib === undefined ? "" : String(budgetGib)}
+            onChange={(e) => setBudgetGib(num((e.target as HTMLInputElement).value))}
+          />
+        </div>
+        <Input
+          label="Allocator-cache limit the load will apply (GiB)"
+          type="number"
+          min="0"
+          step="any"
+          placeholder="eredu default: 256 MiB cap"
+          hint="the same setting as the load gate's. Blank = eredu's managed default (an untouched native default capped at 256 MiB); 0 disables caching."
+          value={cacheLimitGib === undefined ? "" : String(cacheLimitGib)}
+          onChange={(e) => setCacheLimitGib(num((e.target as HTMLInputElement).value))}
+          style={{ maxWidth: 420 }}
+        />
+        <div>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void run()}>
+            {busy ? "Forecasting…" : "Forecast"}
+          </Button>
+        </div>
+        {error && (
+          <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--color-text-danger)", margin: 0 }}>
+            {error}
+          </p>
+        )}
+        {forecast && <MemoryForecastView forecast={forecast} />}
+      </div>
+    </Card>
   );
 }
 

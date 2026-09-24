@@ -12,6 +12,8 @@ pub mod lossless;
 pub mod stream;
 
 #[cfg(feature = "mlx")]
+pub mod memory;
+#[cfg(feature = "mlx")]
 pub mod vocab;
 #[cfg(feature = "mlx")]
 pub mod worker;

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type DockTab = "alternates" | "signals" | "edits" | "stats";
+export type DockTab = "alternates" | "signals" | "components" | "edits" | "stats";
 
 interface UiState {
   /** The one global selection every panel keys off. */

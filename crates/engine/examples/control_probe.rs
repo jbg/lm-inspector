@@ -66,6 +66,7 @@ fn main() {
                 overrides: Default::default(),
                 strategy: eredu_core::TextSamplingStrategy::Standard,
                 seed: 0,
+                prefill: Default::default(),
             },
             CapturePlan::none(),
             resolved.trace,

@@ -9,6 +9,7 @@ import type {
   InspectionBundle,
   ObservationPoint,
 } from "../../lib/types";
+import { scalarValue } from "../../lib/types";
 
 // ----- helpers over the descriptor -----
 
@@ -462,6 +463,8 @@ export function ArchitectureTab({ bundle }: { bundle: InspectionBundle }) {
           ))}
         </div>
 
+        <ComponentSummary arch={arch} />
+
         {arch.parameter_groups.some((p) => p.shared_with) && (
           <Card border padding={16} style={{ marginTop: 12 }}>
             <Eyebrow style={{ marginBottom: 10 }}>Parameter sharing</Eyebrow>
@@ -478,6 +481,75 @@ export function ArchitectureTab({ bundle }: { bundle: InspectionBundle }) {
 
       <DetailPanel arch={arch} node={selectedNode} bundle={bundle} />
     </div>
+  );
+}
+
+// ----- component topology (architecture schema ≥ 13) -----
+
+/** Cold summary of the scalar component declarations: what the component
+ * analysis workflow can decompose, before any weights are loaded. A missing
+ * declaration means "not described", never "no components". */
+function ComponentSummary({ arch }: { arch: ArchitectureDescriptor }) {
+  const groups = arch.components ?? [];
+  const readout = arch.component_readout;
+  if (groups.length === 0 && !readout) return null;
+  const total = groups.reduce((a, g) => a + g.count, 0);
+  const kinds = new Map<string, number>();
+  for (const g of groups) {
+    const kind = g.activation_equation?.kind ?? "unknown";
+    kinds.set(kind, (kinds.get(kind) ?? 0) + g.count);
+  }
+  const transform = readout?.output_transform?.kind;
+  return (
+    <Card border padding={16} style={{ marginTop: 12 }}>
+      <Eyebrow style={{ marginBottom: 10 }}>Component analysis</Eyebrow>
+      <div style={{ fontFamily: "var(--font-code)", fontSize: 12 }}>
+        {total.toLocaleString()} scalar components in {groups.length} groups
+        {kinds.size > 0 &&
+          ` · ${[...kinds.entries()].map(([k, n]) => `${n.toLocaleString()} ${k}`).join(" · ")}`}
+      </div>
+      {readout && (
+        <div style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+          readout: {readout.normalization?.kind} norm → {readout.weight}
+          {readout.tied_embeddings ? " (tied embeddings)" : ""}
+          {transform && transform !== "identity" ? ` → ${transform}` : ""}
+          {(readout.other_writes?.length ?? 0) > 0 &&
+            ` · ${readout.other_writes?.length} whole residual writes`}
+          {(readout.block_transforms?.length ?? 0) > 0 &&
+            ` · whole-residual transforms declared`}
+        </div>
+      )}
+      <div style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+        declarations are cold facts — loaded capture/intervention/parameter
+        support is checked when the model is loaded
+      </div>
+    </Card>
+  );
+}
+
+/** Component groups declared at (or under) the selected node. */
+function ComponentGroupRows({ arch, nodeIds }: { arch: ArchitectureDescriptor; nodeIds: Set<string> }) {
+  const groups = (arch.components ?? []).filter((g) => nodeIds.has(g.node_id));
+  if (groups.length === 0) return null;
+  return (
+    <>
+      <Eyebrow style={{ margin: "14px 0 6px" }}>Components ({groups.length} groups)</Eyebrow>
+      {groups.map((g) => (
+        <div key={g.id} style={{ fontFamily: "var(--font-code)", fontSize: 11, padding: "3px 0" }}>
+          <div style={{ wordBreak: "break-all" }}>{g.id}</div>
+          <div style={{ color: "var(--text-muted)" }}>
+            {g.count.toLocaleString()} × {g.activation_equation?.kind ?? "unknown"}
+            {" · "}
+            {g.reads.map((r) => r.role).join("+") || "no reads"} → write
+            {g.write_bias ? " + bias" : ""}
+            {g.output_normalization ? " → norm" : ""}
+            {scalarValue(g.residual_scale) !== 1 && Number.isFinite(scalarValue(g.residual_scale))
+              ? ` · ×${scalarValue(g.residual_scale)}`
+              : ""}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -578,6 +650,8 @@ function DetailPanel({
           })}
         </>
       )}
+
+      <ComponentGroupRows arch={arch} nodeIds={new Set(interesting.map((n) => n.id))} />
 
       <Eyebrow style={{ margin: "14px 0 6px" }}>
         OBSERVATION POINTS ({nodePoints.length || nodePaths.size})

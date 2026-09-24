@@ -42,6 +42,8 @@ pub enum IpcError {
         requested_prediction: String,
         earliest_reachable: Option<String>,
     },
+    #[error("component analysis {stage} failed: {message}")]
+    Component { stage: String, message: String, chain: Vec<String> },
     #[error("budget {budget}: {detail}")]
     Budget { budget: String, detail: String },
     #[error("transport: {detail}")]

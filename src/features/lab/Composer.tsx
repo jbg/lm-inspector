@@ -2,7 +2,7 @@
 // no modal editors. Non-default sampling values get the magenta left border —
 // the settings-diff primitive reused by comparisons.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "../../goose/ui";
 import { Eyebrow } from "../../goose/ui";
 import { Button } from "../../goose/ui";
@@ -13,8 +13,11 @@ import { Tag } from "../../goose/ui";
 import { useSession } from "../../state/session";
 import { useUi } from "../../state/ui";
 import { Select } from "../../goose/ui";
-import { buildStartSpec, parseTools, usePlans } from "../../state/plans";
+import { buildStartSpec, memoryBudgetBytes, parseTools, usePlans } from "../../state/plans";
 import type { MessageDraft } from "../../state/plans";
+import { live, type MemoryForecast, type StartRunSpec } from "../../lib/liveIpc";
+import { ipcErrorMessage } from "../../lib/types";
+import { MemoryForecastView } from "../common/MemoryForecastView";
 
 export function Composer() {
   const session = useSession();
@@ -64,10 +67,9 @@ export function Composer() {
 
   const lastRunId = useUi((s) => s.viewedRunId) ?? session.activeRunId;
   const toolsError = plans.textMode ? undefined : parseTools(plans.toolsJson).error;
-  const canStart =
-    (plans.textMode
-      ? plans.rawText.trim().length > 0
-      : plans.messages.some((m) => m.content.trim().length > 0)) && !toolsError;
+  // An empty prompt is a valid run: the model samples from BOS (text mode)
+  // or from the template's bare preamble (chat mode).
+  const canStart = !toolsError;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 380px", gap: 16, alignItems: "start" }}>
@@ -88,12 +90,11 @@ export function Composer() {
         </div>
 
         {plans.textMode ? (
-          <textarea
+          <RawPromptEditor
             value={plans.rawText}
-            onChange={(e) => plans.setRawText(e.target.value)}
-            placeholder="raw prompt — no template, no tool/reasoning parsing"
-            style={textareaStyle}
-            rows={8}
+            onChange={plans.setRawText}
+            specialTokens={info?.specialTokens ?? []}
+            eosTokenIds={info?.eosTokenIds ?? []}
           />
         ) : (
           <MessageEditor messages={plans.messages} onChange={plans.setMessages} />
@@ -201,6 +202,192 @@ export function Composer() {
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <SamplingPanel />
         <CapturePanel speculative={speculative} hasMoe={routingPaths.length > 0} />
+        <MemoryPanel
+          spec={buildStartSpec({ ...plans, execution }, layerOutputPaths, routingPaths, speculative)}
+          speculative={speculative}
+          prefillChunkingUnsupported={info?.prefillChunkingUnsupported ?? undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Prefill policy plus a live memory forecast of exactly this run: eredu's
+ * cold estimator over the loaded selection, with the prompt rendered and
+ * tokenized the way the run will be. Forecasts need the idle model (the
+ * prompt render borrows it), so an active session pauses them. */
+function MemoryPanel({
+  spec,
+  speculative,
+  prefillChunkingUnsupported,
+}: {
+  spec: StartRunSpec;
+  speculative: boolean;
+  prefillChunkingUnsupported?: string;
+}) {
+  const plans = usePlans();
+  const m = plans.inference;
+  const modelEpoch = useSession((s) => s.modelEpoch);
+  const loaded = useSession((s) => s.load.phase === "loaded");
+  const activeRunId = useSession((s) => s.activeRunId);
+  const [forecast, setForecast] = useState<MemoryForecast>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const num = (v: string): number | undefined => (v.trim() === "" ? undefined : Number(v));
+
+  // Stable identity for "the same request": the seed is drawn fresh per
+  // render when blank and the timestamp changes every call, and neither
+  // affects memory.
+  const specKey = useMemo(() => {
+    const { seed: _seed, createdMs: _created, ...rest } = spec;
+    return JSON.stringify(rest);
+  }, [spec]);
+  const idle = loaded && activeRunId === undefined;
+  const budgetBytes = memoryBudgetBytes(plans.memoryBudgetGib);
+
+  useEffect(() => {
+    if (!idle) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setBusy(true);
+      const request = JSON.parse(specKey) as StartRunSpec;
+      live
+        .forecastRunMemory(modelEpoch, { ...request, seed: 0, createdMs: 0 }, speculative, budgetBytes)
+        .then((result) => {
+          if (cancelled) return;
+          setForecast(result);
+          setError(undefined);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          setError(ipcErrorMessage(e));
+        })
+        .finally(() => {
+          if (!cancelled) setBusy(false);
+        });
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [specKey, speculative, idle, modelEpoch, budgetBytes]);
+
+  return (
+    <Card border padding={20}>
+      <Eyebrow style={{ marginBottom: 12 }}>Memory</Eyebrow>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
+        <Input
+          label="Prefill chunk (positions)"
+          type="number"
+          step="1"
+          min="0"
+          placeholder="512"
+          hint={
+            prefillChunkingUnsupported !== undefined
+              ? `this executable prefills in one pass: ${prefillChunkingUnsupported}`
+              : "prompt positions per prefill pass; 0 = one complete pass. Captures, interventions and speculative runs keep a full pass."
+          }
+          value={m.prefillChunkPositions === undefined ? "" : String(m.prefillChunkPositions)}
+          onChange={(e) => plans.setInference({ prefillChunkPositions: num((e.target as HTMLInputElement).value) })}
+          style={{
+            minWidth: 0,
+            borderLeft: m.prefillChunkPositions !== undefined ? "3px solid var(--accent)" : "3px solid transparent",
+            paddingLeft: 6,
+          }}
+        />
+        <Input
+          label="Memory budget (GiB)"
+          type="number"
+          step="any"
+          min="0"
+          placeholder="none"
+          hint="application budget the fit verdict compares with; the backend often cannot observe free memory"
+          value={plans.memoryBudgetGib === undefined ? "" : String(plans.memoryBudgetGib)}
+          onChange={(e) => plans.setMemoryBudgetGib(num((e.target as HTMLInputElement).value))}
+          style={{ minWidth: 0, borderLeft: "3px solid transparent", paddingLeft: 6 }}
+        />
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Eyebrow style={{ marginBottom: 6 }}>Forecast{busy ? " …" : ""}</Eyebrow>
+        {!idle ? (
+          <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", margin: 0 }}>
+            {loaded
+              ? "End the session to forecast — rendering the prompt needs the idle model."
+              : "Load a model to forecast this run's memory."}
+          </p>
+        ) : error ? (
+          <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--color-text-danger)", margin: 0 }}>
+            forecast unavailable: {error}
+          </p>
+        ) : forecast ? (
+          <MemoryForecastView forecast={forecast} />
+        ) : (
+          <p style={{ fontFamily: "var(--font-code)", fontSize: 11, color: "var(--text-muted)", margin: 0 }}>
+            forecasting…
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** Raw-text prompt: exactly what is typed is what gets prefilled — no chat
+ * template and no automatic BOS. Special tokens typed literally encode to
+ * their single ids, so the picker just splices the literal text at the caret. */
+function RawPromptEditor({
+  value,
+  onChange,
+  specialTokens,
+  eosTokenIds,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  specialTokens: { id: number; text: string }[];
+  eosTokenIds: number[];
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const eos = new Set(eosTokenIds);
+  const insert = (text: string) => {
+    const el = ref.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    onChange(value.slice(0, start) + text + value.slice(end));
+    // Restore the caret after the inserted token once React has re-rendered.
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + text.length, start + text.length);
+    });
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="raw prompt — no template, no automatic BOS, no tool/reasoning parsing"
+        style={textareaStyle}
+        rows={8}
+      />
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <Select
+          label="Insert special token"
+          placeholder={specialTokens.length > 0 ? "choose a token…" : "none in this tokenizer"}
+          value=""
+          disabled={specialTokens.length === 0}
+          options={specialTokens.map((t) => ({
+            value: t.text,
+            label: `${t.text} · ${t.id}${eos.has(t.id) ? " · eos" : ""}`,
+          }))}
+          onChange={(text) => {
+            if (text) insert(text);
+          }}
+          style={{ minWidth: 260 }}
+        />
+        <span style={{ fontSize: 11, color: "var(--text-muted)", paddingBottom: 6 }}>
+          Raw mode prefills exactly this text. The model needs at least one token to
+          start from: insert BOS or end-of-text to sample with no prompt.
+        </span>
       </div>
     </div>
   );

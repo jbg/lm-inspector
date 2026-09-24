@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use inspector_engine::error::IpcError;
 use inspector_engine::journal::JournalStore;
 use inspector_engine::stream::{DeliveryGate, RunEventEnvelope};
+use inspector_engine::memory::ForecastDto;
 use inspector_engine::worker::speculative::{SpecCommand, SpecStatusDto};
 use inspector_engine::worker::{
     BranchOptionsDto, Command, CounterfactualOptionsDto, CounterfactualResultDto, LoadPlanDto,
@@ -311,6 +312,7 @@ session_command!(activate_branch, ActivateBranch, TreeStatusDto, (slot_id: Strin
 session_command!(release_snapshot, ReleaseSnapshot, (), (snapshot_id: String));
 session_command!(release_branch, ReleaseBranch, (), (slot_id: String));
 session_command!(get_tree_status, TreeStatus, TreeStatusDto);
+session_command!(forecast_remaining, ForecastRemaining, ForecastDto, (additional_tokens: u64, budget_bytes: Option<u64>));
 session_command!(end_session, EndSession, ());
 
 #[tauri::command]
@@ -403,6 +405,7 @@ spec_command!(spec_exchange, Exchange, SpecStatusDto, (branch_id: String));
 spec_command!(spec_release_snapshot, ReleaseSnapshot, (), (snapshot_id: String));
 spec_command!(spec_release_branch, ReleaseBranch, (), (branch_id: String));
 spec_command!(spec_snapshot_support, SnapshotSupport, String);
+spec_command!(spec_forecast_remaining, ForecastRemaining, ForecastDto, (additional_tokens: u64, budget_bytes: Option<u64>));
 spec_command!(end_speculative_run, End, ());
 
 /// spec_pause acts through the engine-level pause flag (cross-thread) so it
@@ -415,4 +418,110 @@ pub fn spec_pause(state: State<'_, LiveState>, model_epoch: u64) -> Result<(), I
         .spec_pause
         .store(true, std::sync::atomic::Ordering::SeqCst);
     Ok(())
+}
+
+// ---------- component analysis (idle model only) ----------
+
+use inspector_engine::worker::component::{
+    AnalyzeRequestDto, ComponentCommand, MaskTrialRequestDto, OverlayRequestDto,
+    QueryParameterDto,
+};
+
+macro_rules! component_command {
+    ($name:ident, $variant:ident) => {
+        #[tauri::command]
+        pub async fn $name(
+            state: State<'_, LiveState>,
+            model_epoch: u64,
+        ) -> Result<String, IpcError> {
+            state
+                .with_worker(model_epoch, |reply| {
+                    Command::Component(ComponentCommand::$variant { reply })
+                })?
+                .wait()
+                .await
+        }
+    };
+}
+
+component_command!(get_parameter_discovery, Discovery);
+component_command!(remove_parameter_overlay, RemoveOverlay);
+
+#[tauri::command]
+pub async fn component_analyze(
+    state: State<'_, LiveState>,
+    model_epoch: u64,
+    req: AnalyzeRequestDto,
+) -> Result<String, IpcError> {
+    state
+        .with_worker(model_epoch, |reply| {
+            Command::Component(ComponentCommand::Analyze { req: Box::new(req), reply })
+        })?
+        .wait()
+        .await
+}
+
+#[tauri::command]
+pub async fn component_mask_trial(
+    state: State<'_, LiveState>,
+    model_epoch: u64,
+    req: MaskTrialRequestDto,
+) -> Result<String, IpcError> {
+    state
+        .with_worker(model_epoch, |reply| {
+            Command::Component(ComponentCommand::MaskTrial { req: Box::new(req), reply })
+        })?
+        .wait()
+        .await
+}
+
+#[tauri::command]
+pub async fn query_parameter(
+    state: State<'_, LiveState>,
+    model_epoch: u64,
+    req: QueryParameterDto,
+) -> Result<String, IpcError> {
+    state
+        .with_worker(model_epoch, |reply| {
+            Command::Component(ComponentCommand::QueryParameter { req, reply })
+        })?
+        .wait()
+        .await
+}
+
+#[tauri::command]
+pub async fn install_parameter_overlay(
+    state: State<'_, LiveState>,
+    model_epoch: u64,
+    req: OverlayRequestDto,
+) -> Result<String, IpcError> {
+    state
+        .with_worker(model_epoch, |reply| {
+            Command::Component(ComponentCommand::InstallOverlay { req: Box::new(req), reply })
+        })?
+        .wait()
+        .await
+}
+
+// ---------- memory forecasts ----------
+
+/// Forecast one run spec's memory against the loaded selection. Idle model
+/// only: rendering the prompt needs the model (SessionActive while a run is live).
+#[tauri::command]
+pub async fn forecast_run_memory(
+    state: State<'_, LiveState>,
+    model_epoch: u64,
+    spec: StartRunSpecDto,
+    speculative: bool,
+    budget_bytes: Option<u64>,
+) -> Result<ForecastDto, IpcError> {
+    state
+        .with_worker(model_epoch, |reply| Command::ForecastMemory {
+            spec: Box::new(spec),
+            speculative,
+            budget_bytes,
+            reply,
+        })?
+        .wait()
+        .await
 }

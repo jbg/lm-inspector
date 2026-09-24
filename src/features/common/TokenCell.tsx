@@ -51,6 +51,7 @@ export const TokenCell = memo(function TokenCell({
     <button
       type="button"
       className="tok"
+      data-text={piece}
       data-special={special || undefined}
       data-selected={selected || undefined}
       data-forced={forced || undefined}

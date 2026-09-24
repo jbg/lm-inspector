@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { parseLossless } from "./lossless";
+import type { MemoryForecast } from "./liveIpc";
 import type {
   BackendAvailability,
   CacheSnapshot,
@@ -51,4 +52,27 @@ export async function pinRun(runId: string, pinned: boolean): Promise<void> {
 
 export async function deleteRun(runId: string): Promise<void> {
   return invoke("delete_run", { runId });
+}
+
+/** Cold memory forecast (nothing is loaded): loading included, for
+ * `inputPositions` prompt positions on the inspector's fully resident plan.
+ * Rejected in cold builds (the projection needs the backend's facts). */
+export async function estimateModelMemory(
+  path: string,
+  device: "cpu" | "accelerator",
+  inputPositions: number,
+  maxOutputTokens: number | undefined,
+  prefillChunkTokens: number,
+  budgetBytes: number | undefined,
+  cacheLimitBytes: number | undefined,
+): Promise<MemoryForecast> {
+  return invoke<MemoryForecast>("estimate_model_memory", {
+    path,
+    device,
+    inputPositions,
+    maxOutputTokens: maxOutputTokens ?? null,
+    prefillChunkTokens,
+    budgetBytes: budgetBytes ?? null,
+    cacheLimitBytes: cacheLimitBytes ?? null,
+  });
 }

@@ -26,9 +26,9 @@ use crate::journal::{RunLineage, RunMeta, RunStatus};
 use crate::stream::StreamKind;
 use crate::worker::load::{Backend, LoadedWorkerModel};
 use crate::worker::{
-    BranchOptionsDto, Command, CounterfactualOptionsDto, CounterfactualResultDto, Emitter, Reply,
-    RunStartedDto, SessionCommand, SnapshotMetaDto, SlotDto, StartRunSpecDto, StatusDto,
-    TreeStatusDto, WorkerContext,
+    BranchOptionsDto, Command, CounterfactualOptionsDto, CounterfactualResultDto, Emitter,
+    InferencePolicyDto, Reply, RunStartedDto, SessionCommand, SnapshotMetaDto, SlotDto,
+    StartRunSpecDto, StatusDto, TreeStatusDto, WorkerContext,
 };
 
 type Session<'a> = ControlledGenerationSession<'a, Backend>;
@@ -97,6 +97,7 @@ fn status_dto(session: &Session<'_>) -> StatusDto {
             .finish_reason()
             .and_then(|r| serde_json::to_value(r).ok())
             .and_then(|v| v.as_str().map(String::from)),
+        allocator: crate::worker::load::allocator_sample(),
     }
 }
 
@@ -112,11 +113,11 @@ fn serialize_string<T: serde::Serialize>(value: &T) -> String {
 }
 
 /// Parse spec fields into eredu types; every error is typed and user-visible.
-struct PreparedSpec {
-    chat_request: ChatTemplateRequest,
-    settings: PreparedChatGenerationSettings,
-    capture: CapturePlan,
-    intervention: Option<InterventionPlan>,
+pub(crate) struct PreparedSpec {
+    pub(crate) chat_request: ChatTemplateRequest,
+    pub(crate) settings: PreparedChatGenerationSettings,
+    pub(crate) capture: CapturePlan,
+    pub(crate) intervention: Option<InterventionPlan>,
     stops: Vec<String>,
     text_mode_requested: bool,
     trace: TraceLimits,
@@ -127,10 +128,10 @@ struct PreparedSpec {
     /// The dummy forbidden-tool surface was injected for snapshot coverage;
     /// some native tool grammars reject a declared collection with zero
     /// permitted calls, so prepare_chat gets one tool-less retry.
-    injected_dummy_tools: bool,
+    pub(crate) injected_dummy_tools: bool,
 }
 
-fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
+pub(crate) fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
     let budget_overrides = spec.budgets.clone().unwrap_or_default();
     let resolved = budgets::resolve(&budget_overrides);
     let mut clamp_notes = resolved.notes;
@@ -187,6 +188,7 @@ fn prepare_spec(spec: &StartRunSpecDto) -> Result<PreparedSpec, IpcError> {
         overrides,
         strategy,
         seed: spec.seed.unwrap_or(42),
+        prefill: InferencePolicyDto::prefill_policy(spec)?,
     };
 
     let mut capture: CapturePlan = match &spec.capture {
@@ -249,6 +251,68 @@ fn clamp_capture_limits(limits: &mut CaptureLimits, notes: &mut Vec<ClampNote>) 
     limits.physical_native_bytes = None;
 }
 
+/// The model needs at least one token to predict from; raw mode never
+/// supplies one behind the user's back.
+pub const RAW_PROMPT_EMPTY: &str = "the raw prompt has no tokens — raw mode adds nothing automatically, so insert a start token (BOS or end-of-text) from the special-token picker or type some text";
+
+/// Tokenize a raw-text prompt into the exact prefix that bypasses the chat
+/// template. Nothing is added automatically; special tokens typed literally
+/// encode to their ids. `None` when the run is not in raw-text mode.
+pub(crate) fn raw_prefix(
+    loaded: &LoadedWorkerModel,
+    spec: &StartRunSpecDto,
+) -> Result<Option<Vec<u32>>, IpcError> {
+    let Some(raw) = spec.raw_text.as_deref() else {
+        return Ok(None);
+    };
+    let ids = loaded.model.encode(raw, false).map_err(|e| IpcError::Control {
+        op: "encode".into(),
+        class: ControlErrorClass::Generation,
+        message: e.to_string(),
+        chain: error_chain(&e),
+    })?;
+    if ids.is_empty() {
+        return Err(IpcError::Control {
+            op: "encode".into(),
+            class: ControlErrorClass::Generation,
+            message: RAW_PROMPT_EMPTY.into(),
+            chain: vec![],
+        });
+    }
+    Ok(Some(ids))
+}
+
+/// Admit the run's capture/intervention plans over the prepared chat: the
+/// rendered prompt, or in raw-text mode the exact token prefix (the chat then
+/// only supplies the output/termination contract).
+pub(crate) fn prepare_observed(
+    model: &mut eredu::api::LoadedModel<Backend>,
+    chat: &eredu::runtime::chat::PreparedChat,
+    prepared_spec: &PreparedSpec,
+    raw_prefix: Option<&[u32]>,
+) -> Result<eredu::api::PreparedObservedGeneration, eredu::api::PreparedChatError> {
+    let settings = prepared_spec.settings.clone();
+    let capture = prepared_spec.capture.clone();
+    let trace = prepared_spec.trace;
+    match (&prepared_spec.intervention, raw_prefix) {
+        (Some(plan), Some(ids)) => model.prepare_intervened_token_ids(
+            chat,
+            ids.to_vec(),
+            settings,
+            capture,
+            plan.clone(),
+            trace,
+        ),
+        (Some(plan), None) => {
+            model.prepare_intervened_chat(chat, settings, capture, plan.clone(), trace)
+        }
+        (None, Some(ids)) => {
+            model.prepare_observed_token_ids(chat, ids.to_vec(), settings, capture, trace)
+        }
+        (None, None) => model.prepare_observed_chat(chat, settings, capture, trace),
+    }
+}
+
 /// Run one controlled tree to completion. Returns a queued command (new run /
 /// shutdown) that arrived mid-session and must be replayed by the caller.
 pub fn run_controlled(
@@ -266,40 +330,37 @@ pub fn run_controlled(
         }
     };
 
+    let raw_prefix = match raw_prefix(loaded, &spec) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = reply.send(Err(e));
+            return None;
+        }
+    };
+
     // Prepare the chat (template render + capability probing). If the model's
     // native tool grammar rejects the injected dummy surface (e.g. Muse's ATEM
     // collection requires at least one call), retry genuinely tool-less —
     // snapshots may then be unavailable, but generation works.
-    let first_attempt = loaded.model.prepare_chat(prepared_spec.chat_request.clone());
-    let chat = match first_attempt {
+    let toolless = || ChatTemplateRequest {
+        tools: vec![],
+        tool_choice: ToolChoice::Auto,
+        ..prepared_spec.chat_request.clone()
+    };
+    let chat = match loaded.prepare_chat(prepared_spec.chat_request.clone()) {
         Ok(chat) => chat,
         Err(e) if prepared_spec.injected_dummy_tools => {
-            let toolless = ChatTemplateRequest {
-                tools: vec![],
-                tool_choice: ToolChoice::Auto,
-                ..prepared_spec.chat_request.clone()
-            };
-            match loaded.model.prepare_chat(toolless) {
+            match loaded.prepare_chat(toolless()) {
                 Ok(chat) => chat,
                 Err(_) => {
                     // Report the original rejection; the retry did not help.
-                    let _ = reply.send(Err(IpcError::Control {
-                        op: "prepare_chat".into(),
-                        class: ControlErrorClass::Generation,
-                        message: e.to_string(),
-                        chain: error_chain(&e),
-                    }));
+                    let _ = reply.send(Err(e));
                     return None;
                 }
             }
         }
         Err(e) => {
-            let _ = reply.send(Err(IpcError::Control {
-                op: "prepare_chat".into(),
-                class: ControlErrorClass::Generation,
-                message: e.to_string(),
-                chain: error_chain(&e),
-            }));
+            let _ = reply.send(Err(e));
             return None;
         }
     };
@@ -310,20 +371,10 @@ pub fn run_controlled(
     // admission rejects any tool declaration — so a template that falls back
     // to text mode must be re-prepared genuinely tool-less.
     let chat = if use_text && prepared_spec.injected_dummy_tools {
-        let toolless = ChatTemplateRequest {
-            tools: vec![],
-            tool_choice: ToolChoice::Auto,
-            ..prepared_spec.chat_request.clone()
-        };
-        match loaded.model.prepare_chat(toolless) {
+        match loaded.prepare_chat(toolless()) {
             Ok(c) => c,
             Err(e) => {
-                let _ = reply.send(Err(IpcError::Control {
-                    op: "prepare_chat".into(),
-                    class: ControlErrorClass::Generation,
-                    message: e.to_string(),
-                    chain: error_chain(&e),
-                }));
+                let _ = reply.send(Err(e));
                 return None;
             }
         }
@@ -333,35 +384,12 @@ pub fn run_controlled(
 
     // Explicitly requested observed mode: never attempt a controlled start.
     if spec.execution.as_deref() == Some("observed") {
-        // eredu has no observed text API — observed generation is semantic.
-        if use_text {
-            let _ = reply.send(Err(IpcError::Control {
-                op: "observed".into(),
-                class: ControlErrorClass::Generation,
-                message: "observed mode runs the semantic pipeline, and this chat template has no recognized format — run it in controlled mode instead (text fallback)".into(),
-                chain: vec![],
-            }));
-            return None;
-        }
         return run_observed_fallback(
             loaded,
             &spec,
             &prepared_spec,
-            |model| match &prepared_spec.intervention {
-                Some(plan) => model.prepare_intervened_chat(
-                    &chat,
-                    prepared_spec.settings.clone(),
-                    prepared_spec.capture.clone(),
-                    plan.clone(),
-                    prepared_spec.trace,
-                ),
-                None => model.prepare_observed_chat(
-                    &chat,
-                    prepared_spec.settings.clone(),
-                    prepared_spec.capture.clone(),
-                    prepared_spec.trace,
-                ),
-            },
+            |model| prepare_observed(model, &chat, &prepared_spec, raw_prefix.as_deref()),
+            use_text,
             "observed mode was selected for this run".into(),
             reply,
             context,
@@ -369,21 +397,7 @@ pub fn run_controlled(
     }
 
     let prepared = {
-        let result = match &prepared_spec.intervention {
-            Some(plan) => loaded.model.prepare_intervened_chat(
-                &chat,
-                prepared_spec.settings.clone(),
-                prepared_spec.capture.clone(),
-                plan.clone(),
-                prepared_spec.trace,
-            ),
-            None => loaded.model.prepare_observed_chat(
-                &chat,
-                prepared_spec.settings.clone(),
-                prepared_spec.capture.clone(),
-                prepared_spec.trace,
-            ),
-        };
+        let result = prepare_observed(&mut loaded.model, &chat, &prepared_spec, raw_prefix.as_deref());
         match result {
             Ok(p) => p,
             Err(e) => {
@@ -438,21 +452,8 @@ pub fn run_controlled(
                     loaded,
                     &spec,
                     &prepared_spec,
-                    |model| match &prepared_spec.intervention {
-                        Some(plan) => model.prepare_intervened_chat(
-                            &chat,
-                            prepared_spec.settings.clone(),
-                            prepared_spec.capture.clone(),
-                            plan.clone(),
-                            prepared_spec.trace,
-                        ),
-                        None => model.prepare_observed_chat(
-                            &chat,
-                            prepared_spec.settings.clone(),
-                            prepared_spec.capture.clone(),
-                            prepared_spec.trace,
-                        ),
-                    },
+                    |model| prepare_observed(model, &chat, &prepared_spec, raw_prefix.as_deref()),
+                    use_text,
                     reason,
                     reply,
                     context,
@@ -546,6 +547,12 @@ pub fn run_controlled(
                 }));
             }
             Command::Spec(cmd) => super::speculative::reject(cmd),
+            Command::Component(cmd) => super::component::reject(cmd, &tree.active_run),
+            Command::ForecastMemory { reply, .. } => {
+                let _ = reply.send(Err(IpcError::SessionActive {
+                    active_run: tree.active_run.clone(),
+                }));
+            }
             other @ (Command::StartRun { .. }
             | Command::StartSpeculativeRun { .. }
             | Command::Shutdown(_)) => {
@@ -585,7 +592,9 @@ pub fn run_controlled(
 /// controlled runs — each ObservedGenerationRecord wrapped with a synthesized
 /// monotone sequence and epoch 0, so the journal and frontend are unchanged.
 /// The start reply is sent on the first record (that is when eredu assigns
-/// the run id), carrying the control-unavailability reason.
+/// the run id), carrying the control-unavailability reason. `use_text`
+/// selects literal text decoding (templates without a recognized format).
+#[allow(clippy::too_many_arguments)]
 fn run_observed_fallback(
     loaded: &mut LoadedWorkerModel,
     spec: &StartRunSpecDto,
@@ -593,6 +602,7 @@ fn run_observed_fallback(
     prepare: impl FnOnce(
         &mut eredu::api::LoadedModel<Backend>,
     ) -> Result<eredu::api::PreparedObservedGeneration, eredu::api::PreparedChatError>,
+    use_text: bool,
     control_note: String,
     reply: Reply<RunStartedDto>,
     context: &WorkerContext,
@@ -673,10 +683,15 @@ fn run_observed_fallback(
         }
     };
 
-    let result =
+    let result = if use_text {
         loaded
             .model
-            .generate_observed_chat(prepared, &prepared_spec.stops, cancellation.clone(), emit);
+            .generate_observed_text(prepared, &prepared_spec.stops, cancellation.clone(), emit)
+    } else {
+        loaded
+            .model
+            .generate_observed_chat(prepared, &prepared_spec.stops, cancellation.clone(), emit)
+    };
     *context
         .shared
         .spec_cancellation
@@ -842,6 +857,29 @@ fn handle_session_command(
         SessionCommand::Counterfactual { run_id, prediction_index, token_id, options, reply } => {
             let result =
                 counterfactual(session, tree, emitter, context, &run_id, prediction_index, token_id, options);
+            let _ = reply.send(result);
+        }
+        SessionCommand::ForecastRemaining { additional_tokens, budget_bytes, reply } => {
+            let result = session
+                .forecast_remaining_generation(
+                    additional_tokens,
+                    &crate::memory::forecast_options(budget_bytes),
+                )
+                .map_err(|e| IpcError::Capability {
+                    operation: "continuation forecast".into(),
+                    reason: e.to_string(),
+                })
+                .and_then(|forecast| {
+                    crate::memory::summarize_continuation(
+                        forecast,
+                        additional_tokens,
+                        eredu::api::discover_local_hardware()
+                            .physical_memory_bytes
+                            .value()
+                            .copied(),
+                        crate::worker::load::allocator_sample(),
+                    )
+                });
             let _ = reply.send(result);
         }
         SessionCommand::TreeStatus { reply } => {

@@ -7,7 +7,9 @@ import { Button } from "../../goose/ui";
 import { Input } from "../../goose/ui";
 import { Tooltip } from "../../goose/ui";
 import { Dialog } from "../../goose/ui";
-import { useSession } from "../../state/session";
+import { OUTLOOK_TOKENS, useSession } from "../../state/session";
+import { FIT_LABEL, formatRange, parseEstimate } from "../../lib/memory";
+import type { MemoryForecast } from "../../lib/liveIpc";
 import { useUi } from "../../state/ui";
 import { useJournal } from "../../state/journal/useJournal";
 import { formatBytes } from "../../lib/format";
@@ -99,6 +101,16 @@ export function Transport() {
         {derived ? `${derived.tokens.length} TOK` : ""}
         {tokensPerSecond ? ` · ${tokensPerSecond.toFixed(1)} TOK/S` : ""}
       </span>
+
+      {session.allocator && (
+        <Tooltip label="MLX allocator: bytes active now / peak since load. A physical measurement, not eredu's admission estimate.">
+          <span style={{ fontFamily: "var(--font-code)", fontSize: 12, color: "var(--text-muted)" }}>
+            MEM {formatBytes(session.allocator.activeBytes)} · PEAK {formatBytes(session.allocator.peakBytes)}
+          </span>
+        </Tooltip>
+      )}
+
+      {session.outlook && status === "paused" && !viewingParked && <OutlookChip outlook={session.outlook} />}
 
       {session.pendingForcedToken !== undefined && (
         <span
@@ -224,4 +236,32 @@ function rate(stepSeconds: number[]): number | undefined {
   const total = stepSeconds.reduce((a, b) => a + b, 0);
   if (total <= 0) return undefined;
   return stepSeconds.length / total;
+}
+
+/** Memory outlook for the next OUTLOOK_TOKENS predictions from the paused
+ * session's installed state: eredu's continuation forecast (decode-only
+ * phases, live snapshot/branch retention as an upper allowance). */
+function OutlookChip({ outlook }: { outlook: MemoryForecast }) {
+  const estimate = parseEstimate(outlook);
+  const domain = estimate.domains[0];
+  if (!domain) return null;
+  const additional = formatRange(domain.additional_generation_peak);
+  const horizon = outlook.maxOutputTokens ?? OUTLOOK_TOKENS;
+  const label = `${FIT_LABEL[outlook.fit]} for the next ${horizon} tokens: additional ${additional} (generation peak ${formatRange(domain.generation_peak)}${
+    outlook.availableBytes !== undefined ? `, ${formatBytes(outlook.availableBytes)} available` : ""
+  }). Planning estimate from the installed cache frontier, not a process bound.`;
+  return (
+    <Tooltip label={label}>
+      <span
+        style={{
+          fontFamily: "var(--font-code)",
+          fontSize: 12,
+          color: outlook.fit === "likely_shortfall" ? "var(--color-text-danger)" : "var(--text-muted)",
+        }}
+      >
+        +{horizon} TOK {additional}
+        {outlook.fit === "likely_shortfall" ? " · SHORTFALL" : outlook.fit === "likely_fit" ? " · FITS" : ""}
+      </span>
+    </Tooltip>
+  );
 }

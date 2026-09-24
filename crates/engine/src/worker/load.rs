@@ -4,25 +4,58 @@
 use std::path::Path;
 
 use eredu::api::{local_device_plan, LoadedModel, LocalDevice, PreparedChatGenerationSettings};
+use eredu::runtime::chat::{ChatTemplateRequest, PreparedChat};
 use eredu_backend_mlx::MlxBackendFactory;
 use eredu_core::{DraftPlacementPlan, DraftingPlan, ExecutionPlan, SessionCapabilities};
 
 use crate::error::{error_chain, IpcError};
-use crate::worker::{DeviceDto, DraftingDto, LoadPlanDto, LoadedModelInfoDto, WorkerContext};
+use crate::worker::{
+    DeviceDto, DraftingDto, LoadPlanDto, LoadedModelInfoDto, SpecialTokenDto, WorkerContext,
+};
 
 pub type Backend = eredu_backend_mlx::backend::MlxBackend<'static>;
 pub type Drafter = <MlxBackendFactory as eredu_core::ExecutionPlanBackendFactory>::Drafter;
 
 pub struct LoadedWorkerModel {
     pub model: LoadedModel<Backend>,
+    /// Cold selection retained for request memory forecasts: the exact
+    /// checkpoint/mechanism choices the loaded execution plan admitted, so a
+    /// forecast describes this load rather than a fresh default selection.
+    pub inspection: Option<eredu_architectures::ModelInspectionOutcome>,
+    /// The portable execution plan the model was loaded with.
+    pub execution_plan: ExecutionPlan,
     pub drafting: eredu_core::RealizedDrafting<Drafter>,
     pub drafting_plan: DraftingPlan,
     pub speculative_options: Option<eredu::api::PreparedChatSpeculativeGenerationOptions>,
     pub info: LoadedModelInfoDto,
     pub vocabulary: std::sync::Arc<Vec<(u32, String)>>,
+    /// Component-analysis caches and overlay lifecycle (idle-model commands).
+    pub component: crate::worker::component::ComponentState,
+}
+
+/// Current MLX allocator sample, or `None` when the backend cannot report it.
+pub fn allocator_sample() -> Option<crate::worker::AllocatorDto> {
+    eredu_backend_mlx::allocator_memory()
+        .ok()
+        .map(|m| crate::worker::AllocatorDto {
+            active_bytes: m.active_bytes(),
+            cached_bytes: m.cached_bytes(),
+            peak_bytes: m.peak_bytes(),
+        })
 }
 
 impl LoadedWorkerModel {
+    /// Render and validate a chat request (template render + tool grammar
+    /// probing). Errors are typed for the UI.
+    pub fn prepare_chat(&mut self, request: ChatTemplateRequest) -> Result<PreparedChat, IpcError> {
+        self.model.prepare_chat(request).map_err(|e| IpcError::Control {
+            op: "prepare_chat".into(),
+            class: crate::error::ControlErrorClass::Generation,
+            message: e.to_string(),
+            chain: error_chain(&e),
+        })
+    }
+
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, IpcError> {
         self.model
             .encode(text, false)
@@ -105,6 +138,39 @@ pub fn load_model(
         .with_required_session_capabilities(SessionCapabilities::new(true, true, true))
         .with_drafting(drafting_plan_value.clone());
 
+    // Cold selection for request memory forecasts (no weights, no device);
+    // failure only disables forecasts, never the load.
+    let inspection = crate::memory::inspect_for_plan(artifact_path, &execution).ok();
+
+    if let Some(bytes) = plan.allocator_cache_limit_bytes {
+        let limit = usize::try_from(bytes).map_err(|_| IpcError::Load {
+            stage: "allocator".into(),
+            message: "allocator-cache limit exceeds the native size".into(),
+            chain: vec![],
+        })?;
+        // Process-global; eredu returns the previous value, which the
+        // inspector deliberately does not restore (one loaded model at a
+        // time, and the limit is the user's chosen runtime policy).
+        let previous = eredu::api::set_local_allocator_cache_limit(limit).map_err(|e| IpcError::Load {
+            stage: "allocator".into(),
+            message: e.to_string(),
+            chain: error_chain(&e),
+        })?;
+        eprintln!("[load] allocator-cache limit {bytes} bytes (was {previous})");
+    } else {
+        // eredu's managed default (cap an untouched native default at
+        // 256 MiB); explicit settings and earlier initialization win.
+        eredu::api::configure_local_runtime(&eredu::api::LocalRuntimeConfiguration::default())
+            .map_err(|e| IpcError::Load {
+                stage: "allocator".into(),
+                message: e.to_string(),
+                chain: error_chain(&e),
+            })?;
+    }
+    // What is actually in force now (eredu reads the native value).
+    let (allocator_cache_limit_bytes, allocator_cache_policy) =
+        crate::memory::allocator_cache_policy();
+
     stage("loading_weights");
     let planned = LoadedModel::load_execution_plan(
         &MlxBackendFactory::default(),
@@ -168,12 +234,25 @@ pub fn load_model(
             .collect::<Vec<(u32, String)>>(),
     );
     *context.emitter.vocabulary.lock().expect("vocab poisoned") = Some(vocabulary.clone());
-    {
+    // The tokenizer's special (control) tokens: the added tokens flagged
+    // special, restricted to canonical ids. Raw-text prompts add nothing
+    // automatically, so the composer offers these for literal insertion.
+    let special_tokens: Vec<SpecialTokenDto> = {
         use std::ops::Deref;
         let tokenizer: &tokenizers::Tokenizer = model.tokenizer().deref();
+        let mut special: Vec<SpecialTokenDto> = tokenizer
+            .get_added_tokens_decoder()
+            .iter()
+            .filter(|(_, token)| token.special)
+            .filter(|(id, token)| tokenizer.token_to_id(&token.content) == Some(**id))
+            .map(|(id, token)| SpecialTokenDto { id: *id, text: token.content.clone() })
+            .collect();
+        special.sort_by_key(|t| t.id);
+        special.dedup_by_key(|t| t.id);
         *context.emitter.tokenizer.lock().expect("tokenizer poisoned") =
             Some(std::sync::Arc::new(tokenizer.clone()));
-    }
+        special
+    };
 
     let draft_capacity = match &drafting_plan_value {
         DraftingPlan::Embedded { max_draft_tokens, .. }
@@ -203,7 +282,7 @@ pub fn load_model(
     // a recognized format can never run observed.
     let (control_support, observed_support): (Option<String>, Option<String>) = {
         use std::ops::ControlFlow;
-        let request = eredu::runtime::chat::ChatTemplateRequest {
+        let request = ChatTemplateRequest {
             messages: vec![serde_json::json!({"role": "user", "content": "probe"})],
             add_generation_prompt: true,
             ..Default::default()
@@ -224,9 +303,11 @@ pub fn load_model(
                         .prepare_observed_chat(
                             &chat,
                             PreparedChatGenerationSettings {
-                                overrides: Default::default(),
-                                strategy: eredu_core::TextSamplingStrategy::Standard,
-                                seed: 0,
+                                overrides: eredu_core::GenerationConfigOverrides {
+                                    max_new_tokens: Some(1),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
                             },
                             eredu_core::capture::CapturePlan::none(),
                             resolved.trace,
@@ -260,6 +341,10 @@ pub fn load_model(
         repo_id: repo_id_from_path(artifact_path),
         effective_model_type: model.effective_model_type().to_string(),
         eos_token_ids: model.eos_token_ids().to_vec(),
+        prefill_chunking_unsupported: model.prefill_chunking_support().err().map(String::from),
+        allocator_cache_limit_bytes,
+        allocator_cache_policy,
+        special_tokens,
         has_chat_template: model.has_chat_template(),
         drafting: drafting_label,
         vocabulary_size: vocabulary.len() as u32,
@@ -278,11 +363,14 @@ pub fn load_model(
 
     Ok(LoadedWorkerModel {
         model,
+        inspection,
+        execution_plan: execution,
         drafting,
         drafting_plan: drafting_plan_value,
         speculative_options,
         info,
         vocabulary,
+        component: Default::default(),
     })
 }
 

@@ -48,6 +48,7 @@ fn main() {
                     adaptive_lookahead: false,
                 })
             },
+            allocator_cache_limit_bytes: None,
         },
         1,
         sink.clone(),
@@ -66,6 +67,7 @@ fn main() {
 
     let spec = StartRunSpecDto {
         execution: None,
+        inference: None,
         messages: vec![serde_json::json!({"role": "user", "content": "Why is the sky blue?"})],
         tools: vec![],
         tool_choice: None,
@@ -84,15 +86,53 @@ fn main() {
         created_ms: None,
     };
     if drafter.is_some() {  // embedded or external -> speculative session
+        handle
+            .request(|reply| Command::ForecastMemory { spec: Box::new(spec.clone()), speculative: true, budget_bytes: None, reply })
+            .map(|forecast| {
+                let estimate: serde_json::Value = serde_json::from_str(&forecast.estimate).unwrap();
+                println!(
+                    "speculative forecast: {} · {} positions · speculative phases projected: {} · full pass: {:?} · generation peak {}..{:?} · phases {:?}",
+                    forecast.fit,
+                    forecast.input_positions,
+                    forecast.speculative,
+                    forecast.full_pass,
+                    estimate["domains"][0]["generation_peak"]["lower_bytes"],
+                    estimate["domains"][0]["generation_peak"]["upper_bytes"],
+                    estimate["domains"][0]["phases"].as_array().map(|p| p.iter().map(|x| x["phase"].to_string()).collect::<Vec<_>>()),
+                );
+            })
+            .unwrap_or_else(|e| println!("speculative forecast unavailable: {e}"));
         let started = handle
             .request(|reply| Command::StartSpeculativeRun { spec: Box::new(spec), reply })
             .expect("start failed");
         println!("spec run {} started", started.run_id);
+        let mut outlook_shown = false;
         for _ in 0..steps {
             let status = handle
                 .request(|reply| Command::Spec(inspector_engine::worker::speculative::SpecCommand::Step { actions: 1, reply }))
                 .expect("step failed");
             if status.terminal { break; }
+            // Settled-lane outlook: eligible after prefill or a canonical commit
+            // (rejected mid-transaction, which is a boundary fact, not a failure).
+            if !outlook_shown {
+                match handle.request(|reply| Command::Spec(inspector_engine::worker::speculative::SpecCommand::ForecastRemaining { additional_tokens: 32, budget_bytes: None, reply })) {
+                    Ok(outlook) => {
+                        let estimate: serde_json::Value = serde_json::from_str(&outlook.estimate).unwrap();
+                        println!(
+                            "speculative outlook: {} · from {} positions · +32 tokens · generation peak {}..{:?} · additional {}..{:?} · phases {:?}",
+                            outlook.fit,
+                            outlook.input_positions,
+                            estimate["domains"][0]["generation_peak"]["lower_bytes"],
+                            estimate["domains"][0]["generation_peak"]["upper_bytes"],
+                            estimate["domains"][0]["additional_generation_peak"]["lower_bytes"],
+                            estimate["domains"][0]["additional_generation_peak"]["upper_bytes"],
+                            estimate["domains"][0]["phases"].as_array().map(|p| p.iter().map(|x| x["phase"].to_string()).collect::<Vec<_>>()),
+                        );
+                        outlook_shown = true;
+                    }
+                    Err(e) => println!("speculative outlook not available at this boundary: {e}"),
+                }
+            }
         }
     } else {
         let started = handle

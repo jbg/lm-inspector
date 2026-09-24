@@ -3,9 +3,8 @@
 // snapshot ticks, sampling seams, a thinking band, the speculative draft lane,
 // and the confidence strip minimap underneath.
 
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { Card } from "../../../goose/ui";
-import { Eyebrow } from "../../../goose/ui";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Button, Card, Eyebrow } from "../../../goose/ui";
 import { TokenCell } from "../../common/TokenCell";
 import { useUi } from "../../../state/ui";
 import { useSession } from "../../../state/session";
@@ -88,9 +87,39 @@ export function Tape({ journal }: { journal: RunJournal }) {
   const reasoningTokens = derived.tokens.filter((t) => t.reasoning);
   const bodyTokens = derived.tokens;
 
+  // Selection copy: the cells render whitespace as glyphs, so the OS copy
+  // would carry "␣" and "⏎". Rewrite the clipboard with the literal text of
+  // every token cell the selection touches.
+  const onCopy = (e: React.ClipboardEvent) => {
+    const sel = window.getSelection();
+    const root = scrollRef.current;
+    if (!sel || !root || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const parts: string[] = [];
+    root.querySelectorAll<HTMLElement>(".tok[data-text]").forEach((el) => {
+      if (sel.containsNode(el, true)) parts.push(el.dataset.text ?? "");
+    });
+    if (parts.length === 0) return;
+    e.clipboardData.setData("text/plain", parts.join(""));
+    e.preventDefault();
+  };
+
   return (
     <Card border padding={0} style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: 20 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: "8px 12px 0" }}>
+        <CopyButton
+          label="Copy output"
+          title="copy the generated text (literal whitespace, thinking excluded)"
+          text={() => bodyTokens.filter((t) => !t.reasoning).map(literalText).join("")}
+        />
+        {reasoningTokens.length > 0 && (
+          <CopyButton
+            label="Copy with thinking"
+            title="copy the generated text including the thinking band"
+            text={() => bodyTokens.map(literalText).join("")}
+          />
+        )}
+      </div>
+      <div ref={scrollRef} onCopy={onCopy} style={{ flex: 1, overflow: "auto", padding: 20 }}>
         {/* prompt band */}
         <div
           style={{
@@ -192,6 +221,29 @@ export function Tape({ journal }: { journal: RunJournal }) {
 
       <ConfidenceStrip journal={journal} />
     </Card>
+  );
+}
+
+function literalText(t: TokenEntry): string {
+  return t.text || (pieceFor(t.tokenId) ?? "");
+}
+
+function CopyButton({ label, title, text }: { label: string; title: string; text: () => string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      title={title}
+      onClick={() => {
+        void navigator.clipboard.writeText(text()).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {copied ? "Copied" : label}
+    </Button>
   );
 }
 

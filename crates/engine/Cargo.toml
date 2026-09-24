@@ -16,6 +16,7 @@ eredu-core = { workspace = true }
 eredu-architectures = { workspace = true }
 eredu-text = { workspace = true }
 eredu-runtime = { workspace = true }
+eredu-evaluation = { workspace = true }
 eredu-backend-mlx = { workspace = true, optional = true }
 hf-cache-reader = { workspace = true }
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"], optional = true }

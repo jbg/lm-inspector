@@ -21,7 +21,7 @@ use eredu_runtime::speculative::{
 };
 use serde::Serialize;
 
-use eredu::runtime::chat::{ChatTemplateRequest, ToolChoice};
+use eredu::runtime::chat::{ChatTemplateRequest, SemanticSupport, ToolChoice};
 use eredu_core::{GenerationConfigOverrides, TextSamplingStrategy};
 use eredu_runtime::execution_control::TraceLimits;
 
@@ -30,7 +30,9 @@ use crate::error::{error_chain, IpcError};
 use crate::journal::{RunMeta, RunStatus};
 use crate::stream::StreamKind;
 use crate::worker::load::LoadedWorkerModel;
-use crate::worker::{Command, Emitter, Reply, RunStartedDto, StartRunSpecDto, WorkerContext};
+use crate::worker::{
+    Command, Emitter, InferencePolicyDto, Reply, RunStartedDto, StartRunSpecDto, WorkerContext,
+};
 
 /// Parsed speculative-run settings (parallel to controlled::prepare_spec but
 /// with per-role interventions and speculative capture semantics).
@@ -92,6 +94,7 @@ impl PreparedSpecSettings {
                 overrides,
                 strategy,
                 seed: spec.seed.unwrap_or(42),
+                prefill: InferencePolicyDto::prefill_policy(spec)?,
             },
             stops: spec.stops.clone(),
             trace: resolved.trace,
@@ -114,6 +117,8 @@ pub struct SpecStatusDto {
     pub token_count: u64,
     pub terminal: bool,
     pub snapshot_support: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocator: Option<crate::worker::AllocatorDto>,
 }
 
 pub enum SpecCommand {
@@ -139,6 +144,13 @@ pub enum SpecCommand {
     ReleaseSnapshot { snapshot_id: String, reply: Reply<()> },
     ReleaseBranch { branch_id: String, reply: Reply<()> },
     SnapshotSupport { reply: Reply<String> },
+    /// Memory outlook for more committed tokens from the settled lane
+    /// (after prefill or a canonical commit; rejected mid-transaction).
+    ForecastRemaining {
+        additional_tokens: u64,
+        budget_bytes: Option<u64>,
+        reply: Reply<crate::memory::ForecastDto>,
+    },
     End { reply: Reply<()> },
 }
 
@@ -159,6 +171,7 @@ pub fn reject(cmd: SpecCommand) {
         SpecCommand::ReleaseSnapshot { reply, .. } => drop(reply.send(Err(err()))),
         SpecCommand::ReleaseBranch { reply, .. } => drop(reply.send(Err(err()))),
         SpecCommand::SnapshotSupport { reply } => drop(reply.send(Err(err()))),
+        SpecCommand::ForecastRemaining { reply, .. } => drop(reply.send(Err(err()))),
         SpecCommand::End { reply } => drop(reply.send(Ok(()))),
     }
 }
@@ -190,6 +203,7 @@ fn status_dto(
         token_count: session.token_ids().len() as u64,
         terminal,
         snapshot_support: serde_json::to_string(&session.snapshot_support()).ok(),
+        allocator: crate::worker::load::allocator_sample(),
     }
 }
 
@@ -216,10 +230,10 @@ pub fn run_speculative(
         }
     };
 
-    let chat = match loaded.model.prepare_chat(prepared.chat_request.clone()) {
+    let chat = match loaded.prepare_chat(prepared.chat_request.clone()) {
         Ok(chat) => chat,
         Err(e) => {
-            let _ = reply.send(Err(spec_error("prepare_chat", &e)));
+            let _ = reply.send(Err(e));
             return None;
         }
     };
@@ -228,18 +242,30 @@ pub fn run_speculative(
     // internally and its step records never carry the prompt, so admit a
     // throwaway observed preparation over the same chat (admission only, no
     // execution) and stream the ids as a synthetic record.
-    let prompt_token_ids: Vec<u32> = {
-        let resolved = crate::budgets::resolve(&Default::default());
-        loaded
-            .model
-            .prepare_observed_chat(
-                &chat,
-                prepared.settings.clone(),
-                eredu_core::capture::CapturePlan::none(),
-                resolved.trace,
-            )
-            .map(|p| p.prompt_token_ids().to_vec())
-            .unwrap_or_default()
+    // Raw-text runs bypass the template: the user's text is tokenized
+    // exactly as written (no automatic BOS) and submitted as the prefix.
+    let raw_prefix: Option<Vec<u32>> = match spec.raw_text.as_deref() {
+        Some(raw) => match loaded.model.encode(raw, false) {
+            Ok(ids) if ids.is_empty() => {
+                let _ = reply.send(Err(IpcError::Capability {
+                    operation: "speculative run".into(),
+                    reason: crate::worker::controlled::RAW_PROMPT_EMPTY.into(),
+                }));
+                return None;
+            }
+            Ok(ids) => Some(ids),
+            Err(e) => {
+                let _ = reply.send(Err(spec_error("encode", &e)));
+                return None;
+            }
+        },
+        None => None,
+    };
+    // Rendered prompts encode the prepared render without automatic special
+    // tokens — exactly what eredu prefills for a rendered request.
+    let prompt_token_ids: Vec<u32> = match &raw_prefix {
+        Some(ids) => ids.clone(),
+        None => loaded.model.encode(chat.rendered_prompt(), false).unwrap_or_default(),
     };
 
     // One-row model.logits capture admission (the only speculative capture).
@@ -282,6 +308,7 @@ pub fn run_speculative(
     let options = ControlledSpeculativeOptions {
         trace_limits: prepared.trace,
         capture: admitted_capture,
+        activations: None,
         snapshots: Some(prepared.snapshot_limits),
     };
     let emitter = context.emitter.clone();
@@ -315,7 +342,10 @@ pub fn run_speculative(
     };
 
     let request = PreparedChatSpeculativeGenerationRequest {
-        input: PreparedChatInput::rendered_prompt(&chat),
+        input: match &raw_prefix {
+            Some(ids) => PreparedChatInput::token_ids(&chat, ids.clone()),
+            None => PreparedChatInput::rendered_prompt(&chat),
+        },
         drafting: draft,
         settings: prepared.settings.clone(),
         options: spec_options,
@@ -325,7 +355,9 @@ pub fn run_speculative(
     };
 
     let clamp_notes = prepared.clamp_notes.clone();
-    let result = model.with_controlled_chat_speculative(request, options, |session| {
+    // Literal text decoding for templates without a recognized format.
+    let semantic = matches!(chat.semantic_support(), SemanticSupport::Supported);
+    let drive = |session: &mut dyn ControlledSpeculativeSession| {
         active_run.set(session.run_id());
         let root_label = run_label(model_epoch, session.run_id());
         drive_journal.register_run(RunMeta {
@@ -419,6 +451,14 @@ pub fn run_speculative(
                         active_run: run_label(model_epoch, session.run_id()),
                     }));
                 }
+                Command::Component(cmd) => {
+                    super::component::reject(cmd, &run_label(model_epoch, session.run_id()));
+                }
+                Command::ForecastMemory { reply, .. } => {
+                    let _ = reply.send(Err(IpcError::SessionActive {
+                        active_run: run_label(model_epoch, session.run_id()),
+                    }));
+                }
                 other @ (Command::StartRun { .. }
                 | Command::StartSpeculativeRun { .. }
                 | Command::Shutdown(_)) => {
@@ -430,7 +470,12 @@ pub fn run_speculative(
         // Returning ends the scope: unfinished native work is cancelled/settled.
         let _ = session.cancel();
         Ok(())
-    });
+    };
+    let result = if semantic {
+        model.with_controlled_chat_speculative(request, options, drive)
+    } else {
+        model.with_controlled_text_speculative(request, options, drive)
+    };
 
     *context
         .shared
@@ -632,6 +677,29 @@ fn handle_spec_command(
                     .map_err(|e| spec_error("release_branch", &e)),
                 None => Err(IpcError::RunNotFound { run_id: branch_id }),
             };
+            let _ = reply.send(result);
+        }
+        SpecCommand::ForecastRemaining { additional_tokens, budget_bytes, reply } => {
+            let result = session
+                .forecast_remaining_generation(
+                    additional_tokens,
+                    &crate::memory::forecast_options(budget_bytes),
+                )
+                .map_err(|e| IpcError::Capability {
+                    operation: "continuation forecast".into(),
+                    reason: e.to_string(),
+                })
+                .and_then(|forecast| {
+                    crate::memory::summarize_speculative_continuation(
+                        forecast,
+                        additional_tokens,
+                        eredu::api::discover_local_hardware()
+                            .physical_memory_bytes
+                            .value()
+                            .copied(),
+                        crate::worker::load::allocator_sample(),
+                    )
+                });
             let _ = reply.send(result);
         }
         SpecCommand::SnapshotSupport { reply } => {

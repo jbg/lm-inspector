@@ -4,9 +4,12 @@
 import { create } from "zustand";
 import { i64ToNumber } from "../lib/lossless";
 import { ipcErrorMessage } from "../lib/types";
+import { usePlans } from "./plans";
 import {
   live,
+  type AllocatorSample,
   type Drafting,
+  type MemoryForecast,
   type LoadedModelInfo,
   type RunStarted,
   type StartRunSpec,
@@ -45,6 +48,12 @@ interface SessionState {
   /** Reason the active run has no controls (observed-only fallback). */
   observedOnly?: string;
   transport: { status: string; busy: boolean; finishReason?: string };
+  /** Latest MLX allocator sample, refreshed with every status result. */
+  allocator?: AllocatorSample;
+  /** Mid-session memory outlook, refreshed whenever a run pauses. */
+  outlook?: MemoryForecast;
+  /** Committed tokens per the latest status result (for the outlook horizon). */
+  tokenCount?: number;
   tree?: TreeStatus;
   pendingForcedToken?: number;
   notices: string[];
@@ -56,10 +65,17 @@ interface SessionState {
   setSpecFinished: () => void;
   dismissNotice: (index: number) => void;
 
-  loadModel: (path: string, device: "cpu" | "accelerator", drafting?: Drafting) => Promise<boolean>;
+  loadModel: (
+    path: string,
+    device: "cpu" | "accelerator",
+    drafting?: Drafting,
+    allocatorCacheLimitBytes?: number,
+  ) => Promise<boolean>;
   unloadModel: () => Promise<void>;
   startRun: (spec: StartRunSpec, speculative: boolean) => Promise<RunStarted | undefined>;
   refreshTree: () => Promise<void>;
+  /** Forecast memory for more predictions from the paused session. */
+  refreshOutlook: (additionalTokens: number, budgetBytes?: number) => Promise<void>;
   step: (steps: number) => Promise<void>;
   run: () => Promise<void>;
   pause: () => Promise<void>;
@@ -88,6 +104,9 @@ function parseJson<T>(json: string | undefined): T | undefined {
   }
 }
 
+/** Horizon of the transport's memory outlook. */
+export const OUTLOOK_TOKENS = 64;
+
 export const useSession = create<SessionState>((set, get) => {
   const epoch = () => get().modelEpoch;
   const spec = () => get().speculative;
@@ -101,16 +120,39 @@ export const useSession = create<SessionState>((set, get) => {
     }
   };
 
-  const applyStatus = (status?: { status: string; finishReason?: string }) => {
+  const applyStatus = (status?: {
+    status: string;
+    finishReason?: string;
+    allocator?: AllocatorSample;
+    tokenCount?: number;
+  }) => {
     if (status) {
-      set({
+      set((s) => ({
         transport: {
           status: status.status,
           busy: status.status === "running",
           finishReason: status.finishReason,
         },
-      });
+        allocator: status.allocator ?? s.allocator,
+        tokenCount: status.tokenCount ?? s.tokenCount,
+      }));
     }
+  };
+
+  // Outlook horizon: OUTLOOK_TOKENS, clamped to the run's remaining token
+  // allowance. eredu projects capture geometry only inside the admitted
+  // range; a horizon past the run's limit falls back to the admitted
+  // capture ceilings and reads far more pessimistic than the run can be.
+  const outlookHorizon = () => {
+    const state = get();
+    const plans = usePlans.getState();
+    const checkpoint =
+      state.load.phase === "loaded" ? state.load.info.checkpointGenerationConfig : undefined;
+    const checkpointLimit = Number(checkpoint?.max_new_tokens);
+    const limit =
+      plans.sampling.maxNewTokens ?? (Number.isFinite(checkpointLimit) ? checkpointLimit : 256);
+    const remaining = limit - (state.tokenCount ?? 0);
+    return Math.max(1, Math.min(OUTLOOK_TOKENS, Math.floor(remaining)));
   };
 
   return {
@@ -134,7 +176,7 @@ export const useSession = create<SessionState>((set, get) => {
     dismissNotice: (index) =>
       set((s) => ({ notices: s.notices.filter((_, i) => i !== index) })),
 
-    loadModel: async (path, device, drafting) => {
+    loadModel: async (path, device, drafting, allocatorCacheLimitBytes) => {
       // Preflight: a cold build has no live commands at all — say so plainly
       // instead of surfacing "Command load_model not found".
       try {
@@ -156,7 +198,7 @@ export const useSession = create<SessionState>((set, get) => {
       await ensureEventStream();
       set({ load: { phase: "loading", stage: "requesting", path } });
       try {
-        const info = await live.loadModel(path, { device, drafting });
+        const info = await live.loadModel(path, { device, drafting, allocatorCacheLimitBytes });
         set({
           load: { phase: "loaded", info },
           modelEpoch: i64ToNumber(info.modelEpoch),
@@ -196,6 +238,7 @@ export const useSession = create<SessionState>((set, get) => {
       if (started) {
         set({
           activeRunId: started.runId,
+          outlook: undefined,
           speculative,
           runStarted: started,
           observedOnly: started.controlSupport,
@@ -220,25 +263,58 @@ export const useSession = create<SessionState>((set, get) => {
       }
     },
 
+    refreshOutlook: async (additionalTokens, budgetBytes) => {
+      // Continuation forecasts need a paused, advanced session at a settled
+      // boundary (controlled: a decode boundary; speculative: after prefill
+      // or a canonical commit). Observed, prepared and terminal runs have none;
+      // a mid-transaction speculative boundary is rejected and shows nothing.
+      if (get().observedOnly || get().transport.status !== "paused") {
+        set({ outlook: undefined });
+        return;
+      }
+      try {
+        const outlook = spec()
+          ? await live.specForecastRemaining(epoch(), additionalTokens, budgetBytes)
+          : await live.forecastRemaining(epoch(), additionalTokens, budgetBytes);
+        set({ outlook });
+      } catch {
+        set({ outlook: undefined });
+      }
+    },
+
     step: async (steps) => {
       if (spec()) {
         const status = await guard(() => live.specStep(epoch(), steps));
-        if (status) applyStatus({ status: status.terminal ? "completed" : "paused" });
+        if (status)
+          applyStatus({
+            status: status.terminal ? "completed" : "paused",
+            allocator: status.allocator,
+            tokenCount: status.tokenCount,
+          });
+        void get().refreshOutlook(outlookHorizon());
         return;
       }
       applyStatus(await guard(() => live.stepRun(epoch(), steps)));
       void get().refreshTree();
+      void get().refreshOutlook(outlookHorizon());
     },
 
     run: async () => {
       set((s) => ({ transport: { ...s.transport, status: "running", busy: true } }));
       if (spec()) {
         const status = await guard(() => live.specRun(epoch()));
-        if (status) applyStatus({ status: status.terminal ? "completed" : "paused" });
+        if (status)
+          applyStatus({
+            status: status.terminal ? "completed" : "paused",
+            allocator: status.allocator,
+            tokenCount: status.tokenCount,
+          });
+        void get().refreshOutlook(outlookHorizon());
         return;
       }
       applyStatus(await guard(() => live.continueRun(epoch())));
       void get().refreshTree();
+      void get().refreshOutlook(outlookHorizon());
     },
 
     pause: async () => {

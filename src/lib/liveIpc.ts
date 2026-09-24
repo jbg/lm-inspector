@@ -7,6 +7,9 @@ import type { RunEventEnvelope } from "./types";
 export interface LoadPlan {
   device: "cpu" | "accelerator";
   drafting?: Drafting;
+  /** Process-global MLX allocator-cache limit applied before loading. Absent =
+   * eredu's managed default (an untouched native default capped at 256 MiB). */
+  allocatorCacheLimitBytes?: number;
 }
 
 export type Drafting =
@@ -28,6 +31,19 @@ export interface LoadedModelInfo {
   repoId?: string;
   effectiveModelType: string;
   eosTokenIds: number[];
+  /** Why this executable cannot chunk ordinary plain-text prefill (every run
+   * then prefills in one pass); absent = bounded prefill chunks work.
+   * Captures, interventions, media and speculative runs keep a full pass
+   * regardless. */
+  prefillChunkingUnsupported?: string;
+  /** The process's native allocator-cache limit in force after this load
+   * (eredu reads it from MLX); absent only when the query failed. */
+  allocatorCacheLimitBytes?: number;
+  /** Its provenance; eredu caps an untouched native default at 256 MiB. */
+  allocatorCachePolicy?: string;
+  /** The tokenizer's special (control) tokens, ascending by id. Raw-text
+   * prompts add nothing automatically; the composer offers these to insert. */
+  specialTokens: { id: number; text: string }[];
   hasChatTemplate: boolean;
   drafting: string;
   vocabularySize: number;
@@ -67,6 +83,70 @@ export interface StartRunSpec {
   /** "controlled" (fail if unsupported), "observed" (free-run), or absent =
    * controlled with automatic observed fallback. */
   execution?: "controlled" | "observed";
+  /** Prefill chunking for this run. Absent = eredu's default (512). */
+  inference?: InferencePolicy;
+}
+
+export interface InferencePolicy {
+  /** Maximum prompt positions per prefill pass; 0 = one complete pass.
+   * Only ordinary text runs on chunk-capable executables honor it. */
+  prefillChunkPositions?: number;
+}
+
+/** eredu's `GenerationMemoryEstimate` plus the engine's summary of it. The
+ * estimate rides as verbatim JSON (snake_case, 64-bit safe when parsed with
+ * `parseLossless`); see `lib/memory.ts` for its shape and helpers. */
+export interface MemoryForecast {
+  estimate: string;
+  fit: MemoryFit;
+  inputPositions: number;
+  maxOutputTokens?: number;
+  forecastOutputTokens: number;
+  requestedChunkTokens: number;
+  effectiveChunkTokens: number;
+  /** Why the request keeps a complete prefill pass; absent = chunked. */
+  fullPass?: string;
+  /** Rows one prefill invocation projects. */
+  logits: "final_position" | "every_position";
+  /** Speculative draft/verification/commit phases were projected. */
+  speculative: boolean;
+  /** Mid-session outlook: decode-only phases from the installed frontier. */
+  continuation: boolean;
+  placement: "unified" | "host" | "separate" | "unknown";
+  reserveBytes: number;
+  /** Application budget the forecast was compared with, when one was set. */
+  applicationLimitBytes?: number;
+  availableBytes?: number;
+  physicalMemoryBytes?: number;
+  /** Present for loaded-model forecasts (loading peak excluded). */
+  alreadyResidentBytes?: number;
+  allocatorCacheLimitBytes?: number;
+  /** "native_default" | "managed_default" | "explicit" | "preserved" | "proposed" */
+  allocatorCachePolicy?: string;
+  allocator?: AllocatorSample;
+  recommendations: string[];
+  candidates: MemoryCandidate[];
+}
+
+/** eredu's snake_case wire spelling of the verdict. */
+export type MemoryFit = "likely_fit" | "likely_shortfall" | "insufficient_information";
+
+export interface MemoryCandidate {
+  label: string;
+  chunkTokens?: number;
+  maxOutputTokens?: number;
+  domain: string;
+  generationPeakUpperBytes: number;
+  savingBytes: number;
+  fit: MemoryFit;
+}
+
+/** Bytes the MLX allocator holds right now: a physical measurement, unlike
+ * eredu's logical admission budgets. */
+export interface AllocatorSample {
+  activeBytes: number;
+  cachedBytes: number;
+  peakBytes: number;
 }
 
 export interface RunStarted {
@@ -85,6 +165,7 @@ export interface RunStatusResult {
   nextPrediction: I64;
   tokenCount: number;
   finishReason?: string;
+  allocator?: AllocatorSample;
 }
 
 export interface SnapshotMeta {
@@ -117,12 +198,164 @@ export interface SpecStatus {
   epoch: I64;
   tokenCount: number;
   terminal: boolean;
+  allocator?: AllocatorSample;
   snapshotSupport?: string;
 }
 
 export interface VocabPage {
   total: number;
   entries: { id: number; text: string }[];
+}
+
+// ---------- component analysis ----------
+// Engine DTOs are camelCase; verbatim eredu payloads inside them (token
+// scores, parameter discovery) keep eredu's snake_case serialization.
+
+export interface CapturedTokenScore {
+  target: { token_id: number; score: number; allowed?: boolean };
+  log_probability: number;
+  rank: I64;
+  strongest_alternative?: { token_id: number; score: number } | null;
+  [key: string]: unknown;
+}
+
+export interface CapturedTokenScores {
+  stage: string;
+  source: string;
+  vocabulary: I64;
+  log_partition: number;
+  scores: CapturedTokenScore[];
+  domain?: { allowed_tokens: I64; vocabulary: I64; constrained: boolean } | null;
+  [key: string]: unknown;
+}
+
+export interface ComponentContribution {
+  group: string;
+  nodeId: string;
+  layer: number;
+  index: number;
+  value: number;
+  activation: number;
+  nested: boolean;
+}
+
+export interface GroupAggregate {
+  group: string;
+  nodeId: string;
+  layer: number;
+  count: number;
+  sum: number;
+  sumAbs: number;
+  maxAbs: number;
+  argmaxIndex: number;
+  nested: boolean;
+  /** Ranked indices address write rows, not maskable component IDs. */
+  axisMismatch: boolean;
+}
+
+export interface ScoreDecomposition {
+  margin: boolean;
+  actual: number;
+  reconstructed: number;
+  absoluteError: number;
+  offset: number;
+  projectionInputCorrection: number;
+  embedding: number;
+  otherWrites: [string, number][];
+  biasTerms: number;
+  componentCount: number;
+  nestedComponents: number;
+  nestedComponentSum: number;
+  top: ComponentContribution[];
+  groups: GroupAggregate[];
+}
+
+export interface ComponentAnalysis {
+  targetToken: number;
+  competitorToken?: number | null;
+  tokenScores: CapturedTokenScores;
+  outputTransform: { kind: string; [key: string]: unknown };
+  /** Measured source precision per component group id, for mask trials. */
+  sourceDtypes: Record<string, string>;
+  score: ScoreDecomposition;
+  margin?: ScoreDecomposition | null;
+  parameterUsage: unknown;
+}
+
+export interface AnalyzeRequest {
+  prefixIds: number[];
+  targetToken: number;
+  competitorToken?: number;
+  topComponents?: number;
+}
+
+export interface ComponentMask {
+  groupId: string;
+  indices: number[];
+  keepSelected: boolean;
+  /** Measured source precision word from a prior analysis. */
+  dtype: string;
+  /** "prediction" (last prefix row only, default) or "everywhere". */
+  scope?: "prediction" | "everywhere";
+}
+
+export interface MaskTrialRequest {
+  prefixIds: number[];
+  targetToken: number;
+  competitorToken?: number;
+  masks: ComponentMask[];
+  maxNewTokens?: number;
+  seed?: number;
+}
+
+export interface ComponentTrialResult {
+  tokenScores: CapturedTokenScores;
+  generated: { id: number; text: string }[];
+  status: string;
+  failure?: string | null;
+}
+
+export interface LoadedParameterInfo {
+  id: string;
+  shared_id: string;
+  shape: I64[];
+  dtype?: string | null;
+  supported: boolean;
+  access?: { query: boolean; projection: boolean; replacement: boolean } | null;
+  condition: string;
+  input_transform: unknown;
+  [key: string]: unknown;
+}
+
+export interface ParameterDiscoveryInfo {
+  identity: string;
+  artifact_identity: string;
+  overlay_identity?: string | null;
+  parameters: LoadedParameterInfo[];
+  usage: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export type ComponentEditAction =
+  | { kind: "scale"; factor: number }
+  | { kind: "add"; values: number[] }
+  | { kind: "replace"; values: number[] };
+
+export interface ComponentEdit {
+  groupId: string;
+  component: number;
+  action: ComponentEditAction;
+}
+
+export interface OverlayRequest {
+  provenance: string;
+  edits: ComponentEdit[];
+  rawEdits?: unknown;
+}
+
+export interface OverlayResult {
+  overlayIdentity?: string | null;
+  discovery: ParameterDiscoveryInfo;
 }
 
 export function openEventStream(onEnvelope: (env: RunEventEnvelope) => void): Promise<void> {
@@ -188,6 +421,13 @@ export const live = {
       options,
     }),
   getTreeStatus: (modelEpoch: number) => invoke<TreeStatus>("get_tree_status", { modelEpoch }),
+  /** Memory outlook for more predictions from the paused session's state. */
+  forecastRemaining: (modelEpoch: number, additionalTokens: number, budgetBytes: number | undefined) =>
+    invoke<MemoryForecast>("forecast_remaining", {
+      modelEpoch,
+      additionalTokens,
+      budgetBytes: budgetBytes ?? null,
+    }),
   endSession: (modelEpoch: number) => invoke<void>("end_session", { modelEpoch }),
   // speculative
   startSpeculativeRun: (modelEpoch: number, spec: StartRunSpec) =>
@@ -211,4 +451,43 @@ export const live = {
   specSnapshotSupport: (modelEpoch: number) =>
     invoke<string>("spec_snapshot_support", { modelEpoch }),
   endSpeculativeRun: (modelEpoch: number) => invoke<void>("end_speculative_run", { modelEpoch }),
+  /** Memory outlook for a settled speculative lane (after prefill or a commit). */
+  specForecastRemaining: (modelEpoch: number, additionalTokens: number, budgetBytes: number | undefined) =>
+    invoke<MemoryForecast>("spec_forecast_remaining", {
+      modelEpoch,
+      additionalTokens,
+      budgetBytes: budgetBytes ?? null,
+    }),
+  // component analysis (idle model only; SessionActive while a run is live)
+  getParameterDiscovery: async (modelEpoch: number) =>
+    JSON.parse(await invoke<string>("get_parameter_discovery", { modelEpoch })) as ParameterDiscoveryInfo,
+  componentAnalyze: async (modelEpoch: number, req: AnalyzeRequest) =>
+    JSON.parse(await invoke<string>("component_analyze", { modelEpoch, req })) as ComponentAnalysis,
+  componentMaskTrial: async (modelEpoch: number, req: MaskTrialRequest) =>
+    JSON.parse(await invoke<string>("component_mask_trial", { modelEpoch, req })) as ComponentTrialResult,
+  queryParameter: async (
+    modelEpoch: number,
+    req: { parameter: string; starts: number[]; shape: number[] },
+  ) => JSON.parse(await invoke<string>("query_parameter", { modelEpoch, req })) as {
+    values: number[];
+    [key: string]: unknown;
+  },
+  installParameterOverlay: async (modelEpoch: number, req: OverlayRequest) =>
+    JSON.parse(await invoke<string>("install_parameter_overlay", { modelEpoch, req })) as OverlayResult,
+  removeParameterOverlay: async (modelEpoch: number) =>
+    JSON.parse(await invoke<string>("remove_parameter_overlay", { modelEpoch })) as OverlayResult,
+  /** Memory forecast for a run spec against the loaded selection (idle model
+   * only; SessionActive while a run is live). */
+  forecastRunMemory: (
+    modelEpoch: number,
+    spec: StartRunSpec,
+    speculative: boolean,
+    budgetBytes: number | undefined,
+  ) =>
+    invoke<MemoryForecast>("forecast_run_memory", {
+      modelEpoch,
+      spec,
+      speculative,
+      budgetBytes: budgetBytes ?? null,
+    }),
 };

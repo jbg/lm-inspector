@@ -182,6 +182,105 @@ export interface ObservationPoint {
   [key: string]: unknown;
 }
 
+// ---------- component analysis (architecture schema ≥ 13, component schema ≥ 12) ----------
+
+/** Exact binary32 architecture scalar serialized as its raw bit pattern. */
+export type ScalarBits = number;
+
+const scalarView = new DataView(new ArrayBuffer(4));
+/** Decode a ComponentScalar bit pattern into its f32 value. */
+export function scalarValue(bits: ScalarBits | undefined): number {
+  if (bits === undefined) return NaN;
+  scalarView.setUint32(0, bits >>> 0);
+  return scalarView.getFloat32(0);
+}
+
+export interface ComponentNormalization {
+  kind: "identity" | "rms" | "layer" | "l2";
+  epsilon: ScalarBits;
+  gain?: string | null;
+  gain_offset: ScalarBits;
+  bias?: string | null;
+  groups: number;
+  [key: string]: unknown;
+}
+
+export interface ComponentRead {
+  role: string;
+  weight: string;
+  parameter_group: string;
+  shared_weight: string;
+  bias?: string | null;
+  rows: { kind: string; [key: string]: unknown };
+  projection_output?: string | null;
+  head_normalization?: unknown;
+  source?: unknown;
+  input_projections?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface ComponentGroup {
+  id: string;
+  node_id: string;
+  layer_index: number;
+  count: number;
+  /** Original (intervenable) activation path; `.effective` sibling below. */
+  activation: string;
+  effective_activation: string;
+  write_input?: string | null;
+  write_output?: string | null;
+  output?: string | null;
+  input: string;
+  reads: ComponentRead[];
+  routed_reads?: unknown[];
+  write_weight: string;
+  write_parameter_group: string;
+  shared_write_weight: string;
+  write_bias?: string | null;
+  activation_equation: { kind: string; [key: string]: unknown };
+  input_normalization: ComponentNormalization;
+  output_normalization?: ComponentNormalization | null;
+  output_gate?: unknown;
+  residual_scale: ScalarBits;
+  write_partition?: unknown;
+  [key: string]: unknown;
+}
+
+export interface ComponentResidualWrite {
+  input?: string | null;
+  layer_index: number;
+  node_id: string;
+  output: string;
+  effective_output: string;
+  residual_scale: ScalarBits;
+  [key: string]: unknown;
+}
+
+/** Readout declaration; the equation fields are serde-flattened onto it. */
+export interface ComponentReadout {
+  embedding: string;
+  embedding_weight: string;
+  embedding_scale: ScalarBits;
+  embedding_normalization?: ComponentNormalization | null;
+  token_embedding_normalization?: ComponentNormalization | null;
+  tied_embeddings: boolean;
+  residual: string;
+  normalized: string;
+  projection_input?: string | null;
+  linear_scores: string;
+  logits: string;
+  normalization: ComponentNormalization;
+  weight: string;
+  bias?: string | null;
+  output_transform: { kind: string; [key: string]: unknown };
+  block_normalizations: unknown[];
+  block_transforms?: unknown[];
+  other_writes?: ComponentResidualWrite[];
+  score_writes?: unknown[];
+  stream_residual?: unknown;
+  [key: string]: unknown;
+}
+
 export interface ArchitectureDescriptor {
   schema_version: number;
   nodes: ArchitectureNode[];
@@ -189,6 +288,14 @@ export interface ArchitectureDescriptor {
   parameter_groups: { id: string; canonical_prefix: string; shared_with?: string }[];
   layer_groups: ArchitectureLayerGroup[];
   observations: { points?: ObservationPoint[]; [key: string]: unknown };
+  /** Scalar component groups (empty on descriptors before schema 13, and on
+   * architectures with no component declarations — absence is "not
+   * described", never "no components"). */
+  components?: ComponentGroup[];
+  component_transforms?: unknown[];
+  routed_components?: unknown[];
+  component_readout?: ComponentReadout | null;
+  component_scopes?: unknown[];
   completeness: unknown;
 }
 
